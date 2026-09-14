@@ -1,0 +1,98 @@
+name: Build
+
+# Builds the plugin on macOS and Windows, runs the full Catch2 suite on both,
+# and uploads the plugin bundles as downloadable artifacts.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the older run. macOS runner minutes
+# are expensive on private repos, so don't finish builds nobody will download.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JUCE_VERSION: "8.0.15"
+  CATCH2_VERSION: "v3.5.4"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-14
+            # Universal binary: native on Apple Silicon and Intel Macs.
+            # Quoted: an unquoted ";" would split the bash command in two.
+            cmake_args: >-
+              -DCMAKE_BUILD_TYPE=Release
+              "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          - name: Windows
+            os: windows-latest
+            cmake_args: ""
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # JUCE and Catch2 are not in the repo. Clone them into the workspace and
+      # pass relative :PATH values - CMake makes those absolute against the
+      # working directory, which sidesteps Windows-vs-POSIX path spelling.
+      - name: Fetch JUCE and Catch2
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$JUCE_VERSION"   https://github.com/juce-framework/JUCE.git _sdk/JUCE
+          git clone --depth 1 --branch "$CATCH2_VERSION" https://github.com/catchorg/Catch2.git     _sdk/Catch2
+
+      - name: Configure
+        shell: bash
+        run: >-
+          cmake -S . -B build
+          -DASAMPLER_JUCE_DIR:PATH=_sdk/JUCE
+          -DASAMPLER_CATCH2_DIR:PATH=_sdk/Catch2
+          ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # Bundles are zipped before upload: upload-artifact does not preserve the
+      # symlinks and exec bits a macOS bundle relies on, but ditto does.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=build/ASampler_artefacts/Release
+          mkdir -p package
+          for bundle in "$out/VST3/ASampler.vst3" "$out/AU/ASampler.component"; do
+            # Ad-hoc signature. Not a Developer ID - Gatekeeper will still
+            # quarantine a downloaded copy - but arm64 refuses unsigned code.
+            codesign --force --deep --sign - "$bundle"
+          done
+          ditto -c -k --keepParent "$out/VST3/ASampler.vst3"      package/ASampler-macOS-VST3.zip
+          ditto -c -k --keepParent "$out/AU/ASampler.component"   package/ASampler-macOS-AU.zip
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Compress-Archive -Path build/ASampler_artefacts/Release/VST3/ASampler.vst3 `
+                           -DestinationPath package/ASampler-Windows-VST3.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASampler-${{ matrix.name }}
+          path: package/*.zip
+          if-no-files-found: error

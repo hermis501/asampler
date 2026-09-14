@@ -1,0 +1,19 @@
+# CMake build trees (1.6 GB+ locally, fully regenerable)
+build/
+out/
+dist/
+CMakeUserPresets.json
+
+# IDE / OS clutter
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# SDKs cloned into the workspace by CI
+_sdk/
+
+# Per-machine Claude Code permissions
+.claude/settings.local.json
