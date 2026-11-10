@@ -12,7 +12,12 @@ add_executable(ASamplerTests
     test_transient.cpp
     test_phasevocoder.cpp
     test_plugin_processor.cpp
-    test_vocal.cpp
+    test_announcer.cpp
+    test_release.cpp
+    test_analysis.cpp
+    test_editor.cpp
+    test_layers.cpp
+    test_workflow.cpp
 )
 
 # Link the plugin's SharedCode static library so tests can construct the real
@@ -31,8 +36,15 @@ target_link_directories(ASamplerTests PRIVATE
     "${CMAKE_BINARY_DIR}/ASampler_artefacts/$<CONFIG>"
 )
 
+# Build-order dependency on the plugin target (which is what produces
+# ASampler_SharedCode.lib), so `--target ASamplerTests` rebuilds it first
+# instead of linking a stale copy of the processor/editor sources.
+add_dependencies(ASamplerTests ASampler)
+
 target_compile_features(ASamplerTests PRIVATE cxx_std_20)
 
 list(APPEND CMAKE_MODULE_PATH "${ASAMPLER_CATCH2_DIR}/extras")
 include(Catch)
-catch_discover_tests(ASamplerTests)
+# Catch2 exits with 4 when every selected test SKIPs (e.g. no UI Automation on
+# a headless box); report that to ctest as "skipped" rather than "failed".
+catch_discover_tests(ASamplerTests PROPERTIES SKIP_RETURN_CODE 4)

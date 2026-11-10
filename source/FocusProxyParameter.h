@@ -15,27 +15,31 @@ namespace asampler
     //   Exposing every per-pad control as a host parameter is what makes the
     //   plugin readable by a screen reader at all — REAPER's FX parameter list
     //   speaks host parameters with no custom UI work. But that design
-    //   multiplies: ~58 controls x 16 pads is over 900 parameters, and a blind
+    //   multiplies: ~90 controls x 32 pads is ~2,800 parameters, and a blind
     //   user hunting for "Pad 9 Filter Cutoff" has to arrow through hundreds of
     //   entries to reach it.
     //
     //   The Focus group collapses that. One "Focused Pad" parameter selects the
-    //   pad; a single mirrored group of ~58 "Focus / ..." parameters reads and
-    //   writes through to it. The user navigates ~58 parameters instead of 900+
+    //   pad; a single mirrored group of ~90 "Focus ..." parameters reads and
+    //   writes through to it. The user navigates ~90 parameters instead of 2,800
     //   and changes pad with a single parameter move. The per-pad parameters
     //   stay exposed, so automation and host-side control lose nothing.
     //
-    // All 16 targets are cached at setup so no string lookup happens on any
+    // All 32 targets are cached at setup so no string lookup happens on any
     // hot path. Range, step count, label and text formatting are taken from
     // the reference target (pad 1) — every pad's copy of a given parameter is
     // built identically, so any of them describes the shape correctly.
-    class FocusProxyParameter final : public juce::AudioProcessorParameter
+    class FocusProxyParameter final : public juce::AudioProcessorParameterWithID
     {
     public:
-        FocusProxyParameter (juce::String parameterName, int numPads)
-            : displayName (std::move (parameterName)), targets ((std::size_t) numPads, nullptr)
+        // `id` must be stable ("focus_cutoff"): VST3 derives the host's
+        // parameter ID from it, so saved automation survives regrouping.
+        FocusProxyParameter (const juce::String& id, juce::String parameterName, int numPads)
+            : juce::AudioProcessorParameterWithID (juce::ParameterID { id, 1 }, parameterName),
+              displayName (std::move (parameterName)), targets ((std::size_t) numPads, nullptr)
         {
         }
+
 
         // Two-phase init: the targets don't exist until the APVTS has been
         // constructed, which happens after the parameter layout (including
@@ -109,18 +113,19 @@ namespace asampler
         }
 
         // Screen readers speak this string, so it must come from the target's
-        // own formatter ("-6.00 dB", not "0.75").
+        // own formatter ("-6.00 dB", not "0.75"). The *focused* pad's, not the
+        // reference pad's: slice points read as time in that pad's sample.
         juce::String getText (float normalisedValue, int maximumStringLength) const override
         {
-            auto* r = reference();
-            return r != nullptr ? r->getText (normalisedValue, maximumStringLength)
+            auto* t = target();
+            return t != nullptr ? t->getText (normalisedValue, maximumStringLength)
                                 : juce::String (normalisedValue);
         }
 
         float getValueForText (const juce::String& text) const override
         {
-            auto* r = reference();
-            return r != nullptr ? r->getValueForText (text) : 0.0f;
+            auto* t = target();
+            return t != nullptr ? t->getValueForText (text) : 0.0f;
         }
 
         bool isAutomatable() const override   { return true; }
@@ -138,7 +143,7 @@ namespace asampler
             if (focusedPad == nullptr || targets.empty())
                 return 0;
 
-            // The Focused Pad parameter is 1-based ("Pad 1".."Pad 16").
+            // The Focused Pad parameter is 1-based ("Pad 1".."Pad 32").
             const int oneBased = juce::roundToInt (focusedPad->load());
             return juce::jlimit (0, static_cast<int> (targets.size()) - 1, oneBased - 1);
         }

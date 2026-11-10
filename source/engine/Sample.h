@@ -22,6 +22,7 @@ namespace asampler
         int  getNumSamples()            const noexcept { return buffer.getNumSamples(); }
         double getSourceSampleRate()    const noexcept { return sampleRate; }
         const float* getReadPointer (int ch) const noexcept { return buffer.getReadPointer (ch); }
+        const juce::AudioBuffer<float>& getBuffer() const noexcept { return buffer; }
 
     private:
         juce::AudioBuffer<float> buffer;

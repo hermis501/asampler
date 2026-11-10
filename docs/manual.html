@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASampler Manual</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1a1a1a; --muted: #555; --rule: #ddd; --code: #f3f3f3; --link: #0645ad; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161616; --fg: #e8e8e8; --muted: #aaa; --rule: #333; --code: #262626; --link: #8ab4f8; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 17px/1.6 system-ui, "Segoe UI", sans-serif;
+         max-width: 50rem; margin: 0 auto; padding: 1.5rem 16px 4rem; }
+  a { color: var(--link); }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h2 { margin-top: 2.75rem; border-top: 1px solid var(--rule); padding-top: 1.5rem; }
+  h3 { margin-top: 2rem; }
+  code, kbd { background: var(--code); padding: 0 .3em; border-radius: 3px; font-size: .95em; }
+  table { border-collapse: collapse; width: 100%; margin: .75rem 0 1.25rem; }
+  th, td { text-align: left; vertical-align: top; padding: .4rem .6rem; border-bottom: 1px solid var(--rule); }
+  caption { text-align: left; font-weight: 600; padding: .25rem 0; }
+  .muted { color: var(--muted); }
+  .tablewrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+<h1>ASampler 1.0 Manual</h1>
+<p class="muted">ASampler is an MPC-style drum and chop sampler for Windows and macOS, designed first for producers who use a screen reader. This manual is written to be read with one. Every section and subsection is a heading, so heading navigation (H, or 1 to 3 for heading levels, in NVDA and JAWS browse mode) jumps between them, and the parameter reference uses tables with header cells.</p>
+
+<nav aria-label="Contents">
+<h2 id="contents">Contents</h2>
+<ol>
+  <li><a href="#about">What ASampler is</a></li>
+  <li><a href="#install">Installing</a></li>
+  <li><a href="#quickstart">Quick start: your first beat</a></li>
+  <li><a href="#reaper">Setting up REAPER</a></li>
+  <li><a href="#screenreader">Screen readers and speech</a></li>
+  <li><a href="#editor">The editor</a></li>
+  <li><a href="#params">The parameter list and the Focus group</a></li>
+  <li><a href="#samples">Loading, browsing and describing samples</a></li>
+  <li><a href="#slicing">Slicing and audition</a></li>
+  <li><a href="#chop">Chopping a loop across pads</a></li>
+  <li><a href="#pads">Pads, notes and keyboard mode</a></li>
+  <li><a href="#layers">Layers and multisampling</a></li>
+  <li><a href="#sound">Shaping the sound</a></li>
+  <li><a href="#time">Tempo sync, time stretch and formant</a></li>
+  <li><a href="#repeat">Note repeat, swing and humanize</a></li>
+  <li><a href="#outputs">Separate outputs and the REAPER routing script</a></li>
+  <li><a href="#kits">Kits, factory kits and programs</a></li>
+  <li><a href="#tools">Copy, paste, bounce, normalise, MIDI export</a></li>
+  <li><a href="#midilearn">MIDI learn and controllers</a></li>
+  <li><a href="#undo">Undo and redo</a></li>
+  <li><a href="#recipes">Recipes</a></li>
+  <li><a href="#reference">Parameter reference</a></li>
+  <li><a href="#keys">Keyboard reference</a></li>
+  <li><a href="#trouble">Troubleshooting</a></li>
+  <li><a href="#specs">Technical details</a></li>
+</ol>
+</nav>
+
+<h2 id="about">1. What ASampler is</h2>
+<p>ASampler has 32 pads in two banks of 16, like an MPC: bank A is pads 1 to 16, bank B is pads 17 to 32. Each pad holds a sample (or up to eight, as layers) and plays it when it receives its MIDI note. Pads can be drums that fire on a single note, or melodic instruments spread across the keyboard. Every pad has its own envelope, filter, lo-fi character, two LFOs, mod wheel routing, glide, tempo sync, time stretch, formant control, stereo width and output.</p>
+<p>The design rule behind ASampler is that <strong>everything you can change is a host parameter</strong>. That means the whole instrument can be read and controlled from REAPER's parameter list, automated, and mapped to hardware, without any custom screen to learn. The editor window adds a keyboard-driven pad grid and actions such as loading, chopping and bouncing, and every result is spoken.</p>
+
+<h2 id="install">2. Installing</h2>
+<h3>Windows</h3>
+<ol>
+  <li>Run <code>ASampler-1.0.0-Windows-Setup.exe</code>. It is a standard installer that NVDA and JAWS read normally.</li>
+  <li>If Windows SmartScreen says "Windows protected your PC", choose More info, then Run anyway. The installer is not yet code-signed.</li>
+  <li>The installer puts the plugin in <code>C:\Program Files\Common Files\VST3\ASampler.vst3</code> and adds this manual to the Start menu.</li>
+  <li>If you have used REAPER on this computer, the installer offers a checkbox, checked by default: <strong>Add the "Create pad tracks" action to REAPER's Actions list</strong>. Leave it checked and the routing script (<a href="#outputs">section 16</a>) is ready to use in REAPER's Actions list as "Script: ASampler - Create pad tracks.lua", with nothing to load by hand. REAPER must be closed while this happens; if it is open, the installer asks you to close it and choose Retry.</li>
+  <li>In REAPER, if ASampler doesn't appear in the FX browser, open Options, Preferences, Plug-ins, VST, then choose Re-scan.</li>
+</ol>
+<h3>macOS</h3>
+<p>The Mac version is built automatically and passes the same tests as the Windows one, but nobody has tried it on a real Mac yet. If you do, please report how it went, especially with VoiceOver, on the project's GitHub Issues page.</p>
+<ol>
+  <li>Run <code>ASampler-1.0.0-macOS.pkg</code>. It installs the VST3 to <code>/Library/Audio/Plug-Ins/VST3</code> and the Audio Unit to <code>/Library/Audio/Plug-Ins/Components</code>. It works on macOS 11 or later, on Apple Silicon and Intel.</li>
+  <li>The package isn't signed by Apple, so macOS blocks it the first time. In Finder, open the context menu on the package (with VoiceOver, <kbd>Control</kbd>+<kbd>Option</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>), choose Open, then confirm.</li>
+  <li>If your DAW still says the plugin is damaged or won't load it, run this in Terminal:<br>
+  <code>sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/ASampler.vst3 /Library/Audio/Plug-Ins/Components/ASampler.component</code></li>
+  <li>On a Mac, press <kbd>Cmd</kbd> wherever this manual says <kbd>Ctrl</kbd>.</li>
+</ol>
+<h3>Uninstalling</h3>
+<p>On Windows, use Settings, Apps, ASampler, Uninstall. It also removes the routing script and its entry in REAPER's Actions list, along with any shortcut key you gave it, so nothing is left pointing at a missing file. Close REAPER first; the uninstaller asks if it is open. On macOS, delete the two files listed above.</p>
+
+<h2 id="quickstart">3. Quick start: your first beat</h2>
+<ol>
+  <li>In REAPER, insert a new track, add ASampler to it, and arm the track for recording with monitoring on.</li>
+  <li>Open the ASampler window and press <kbd>Tab</kbd> until you reach the pad grid. You hear "Pad 1, default, note C1, key Z". Before you load anything, every pad plays a built-in test tone.</li>
+  <li>Press <kbd>L</kbd> to open the file dialog, choose a kick drum, and press Enter. You hear "Loaded kick.wav into Pad 1 (Layer 1)".</li>
+  <li>Press <kbd>Space</kbd> to hear it. Press <kbd>N</kbd> to try the next file in the same folder, and <kbd>P</kbd> to go back.</li>
+  <li>Press <kbd>Right Arrow</kbd> to move to Pad 2 and load a closed hi-hat, then Pad 3 for an open hi-hat, and Pad 5 (one row up) for a snare.</li>
+  <li>To make the open hat stop when the closed hat plays, open REAPER's parameter list for ASampler. Set Focused Pad to Pad 2 and Focus Choke Group to Group 1, then Focused Pad to Pad 3 and Focus Choke Group to Group 1. Alternatively, choose Factory kit, then Trap, which does this and more without changing your samples.</li>
+  <li>Play the pads from a MIDI keyboard, or from the computer keyboard with <kbd>Z X C V</kbd> for pads 1 to 4 and <kbd>A S D F</kbd> for pads 5 to 8. Pads use notes C1 upwards (MIDI 36 to 51 for bank A), the General MIDI drum notes, so REAPER's drum maps and most drum MIDI files line up straight away.</li>
+  <li>Save your REAPER project. Your samples and all settings are saved with it.</li>
+</ol>
+
+<h2 id="reaper">4. Setting up REAPER</h2>
+<ul>
+  <li><strong>Let the editor have your keys.</strong> With the ASampler window focused, open the FX window's context menu (Applications key) and turn on "Send all keyboard input to plug-in". Without it, REAPER keeps Space, letters and arrows for its own actions.</li>
+  <li><strong>The parameter list.</strong> OSARA's parameter dialog (in the FX chain, press P) lists every ASampler parameter, and you can type a value into it. REAPER's own FX parameter list and envelope menus show the same parameters.</li>
+  <li><strong>Automation.</strong> Any parameter can be automated: show its envelope from the track's envelope list, then write or draw it as usual.</li>
+  <li><strong>Separate outputs.</strong> Run the "ASampler: Create pad tracks" script. See <a href="#outputs">section 16</a>.</li>
+  <li><strong>Presets.</strong> REAPER's preset menu for ASampler lists the four factory kits (see <a href="#kits">section 17</a>). REAPER's own preset saving also works and stores everything.</li>
+</ul>
+
+<h2 id="screenreader">5. Screen readers and speech</h2>
+<p>When something happens that you didn't move focus to, such as a sample finishing loading, a chop completing or an error, ASampler speaks a message. On Windows it sends the message through Windows UI Automation notifications, so your screen reader speaks it in its own voice, at its own rate, and you can review it in speech history.</p>
+<table>
+  <caption>Screen reader support</caption>
+  <thead><tr><th scope="col">Screen reader</th><th scope="col">Status</th></tr></thead>
+  <tbody>
+    <tr><td>NVDA 2021.1 or later</td><td>Messages spoken automatically.</td></tr>
+    <tr><td>JAWS 2021 or later</td><td>Messages spoken automatically. If you hear nothing, check that notifications aren't turned off in JAWS settings for REAPER.</td></tr>
+    <tr><td>Narrator</td><td>Messages spoken automatically.</td></tr>
+    <tr><td>VoiceOver (macOS)</td><td>Messages are sent as VoiceOver announcements. Not yet tried on a real Mac.</td></tr>
+  </tbody>
+</table>
+<p>How messages behave:</p>
+<ul>
+  <li>An identical message isn't repeated, so a burst of the same event is spoken once.</li>
+  <li>Errors interrupt current speech. Routine confirmations wait their turn.</li>
+  <li>The last message is always in the status line at the bottom of the editor. Tab to it to read it again.</li>
+</ul>
+
+<h2 id="editor">6. The editor</h2>
+<p>The editor is in five parts. <kbd>Tab</kbd> moves between them in this order:</p>
+<ol>
+  <li><strong>Heading</strong>: "ASampler 1.0.0".</li>
+  <li><strong>Pad grid</strong>, one Tab stop.</li>
+  <li><strong>Pad actions</strong>: buttons for the selected pad.</li>
+  <li><strong>Kit actions</strong>: buttons for the whole instrument.</li>
+  <li><strong>Status line</strong>: the last message.</li>
+</ol>
+
+<h3>The pad grid</h3>
+<p>The grid shows one bank of 16 pads, laid out like an MPC: Pad 1 bottom left, Pad 4 bottom right, Pad 13 top left, Pad 16 top right. Bank B uses the same positions for pads 17 to 32. Inside the grid:</p>
+<ul>
+  <li>Arrow keys move between pads. Up goes to higher pad numbers, and up from the top row of bank A carries on into bank B (up from Pad 13 is Pad 17).</li>
+  <li><kbd>Page Up</kbd> and <kbd>Page Down</kbd> switch bank and keep your place: Pad 5 becomes Pad 21. They work from anywhere in the editor. You hear "Bank B, pads 17 to 32". The Bank button above the grid does the same.</li>
+  <li><kbd>Home</kbd> and <kbd>End</kbd> jump to Pad 1 and Pad 32.</li>
+  <li>Moving onto a pad selects it. The Focused Pad parameter follows, so the host's Focus group now controls that pad too.</li>
+  <li><kbd>Space</kbd> or <kbd>Enter</kbd> plays the pad.</li>
+  <li><kbd>Ctrl</kbd> and a pad number jumps straight to that pad when you let go of <kbd>Ctrl</kbd>: hold <kbd>Ctrl</kbd>, type 1 then 2, release, and you are on Pad 12, in whichever bank it is.</li>
+</ul>
+<p>Each pad reads its number, its name if you gave it one, sample name, trigger, any mute or solo, and its computer key. For example: "Pad 3, open hat.wav, note D1, key C", or "Pad 1, Big 808, 808.wav, keys C0 to C3, root C1, key Z". <kbd>F2</kbd> renames the selected pad; leave the name empty to remove it. Names are saved with the project, in kits, and travel with Copy and Paste.</p>
+<h3>Playing from the computer keyboard</h3>
+<p>The keys <kbd>Z X C V</kbd>, <kbd>A S D F</kbd>, <kbd>Q W E R</kbd> and <kbd>1 2 3 4</kbd> play the 16 pads of the current bank like a keyboard: the pad sounds while the key is held and stops when you let go, so one-shot drums play out and sustained sounds hold. Holding a key does not retrigger it. The velocity is the global <strong>Computer Key Velocity</strong> parameter (default 100).</p>
+<p>The notes also go to ASampler's MIDI output. To record what you play: add a second track, give it a MIDI send from the ASampler track (in REAPER, a send with MIDI only), arm it for recording, and play. Only the computer keys are sent; MIDI arriving from REAPER is not echoed back out.</p>
+<p>Hold <kbd>Shift</kbd> with a pad key to hear what that pad holds, without playing it: "Pad 2, Snare, snare 04.wav, note C#1, key X".</p>
+
+<h3>Pad actions</h3>
+<p>These buttons all act on the selected pad, and their labels name it, for example "Bounce Pad 3 (B)".</p>
+<table>
+  <caption>Pad action buttons</caption>
+  <thead><tr><th scope="col">Button</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Load sample (L)</td><td>Opens the system file dialog and loads into the layer chosen by the Edit Layer parameter. Choose several files to spread them over pads or layers. See <a href="#samples">section 8</a>.</td></tr>
+    <tr><td>Previous / Next sample (P / N)</td><td>Loads the previous or next audio file in the same folder.</td></tr>
+    <tr><td>Try previous / Try next sample (Shift+P / Shift+N)</td><td>Plays the previous or next file in the folder on this pad without replacing its sample. Enter keeps it, Escape goes back.</td></tr>
+    <tr><td>Keep tried sample (Enter)</td><td>Keeps the sample being tried.</td></tr>
+    <tr><td>Play (Space)</td><td>Plays the pad.</td></tr>
+    <tr><td>Edit Start / Edit End by ear (T / O)</td><td>Places Start or End with the arrow keys, playing a snippet at each step. See <a href="#slicing">section 9</a>.</td></tr>
+    <tr><td>Trim silence</td><td>Moves Start past leading silence and End to where the sound dies away.</td></tr>
+    <tr><td>Describe (I)</td><td>Speaks length, level, number of hits, tempo, and key or pitch.</td></tr>
+    <tr><td>Rename (F2)</td><td>Gives the pad a name.</td></tr>
+    <tr><td>Learn note (K)</td><td>Sets the pad's Note, Low Note or High Note from the next note you play on a MIDI keyboard. See <a href="#pads">section 11</a>.</td></tr>
+    <tr><td>Apply settings to other pads</td><td>Copies one setting, or a whole section, from this pad to all pads or to this bank. See <a href="#tools">section 18</a>.</td></tr>
+    <tr><td>Reset</td><td>Returns the layer to the built-in test tone.</td></tr>
+    <tr><td>Chop</td><td>Slices this pad's sample across pads 1 to N. The label says which pads it will replace.</td></tr>
+    <tr><td>Copy / Paste</td><td>Copies all settings and samples from one pad to another.</td></tr>
+    <tr><td>Normalise</td><td>Sets the layer's gain so it peaks at -1 dB.</td></tr>
+    <tr><td>Spread velocity layers</td><td>Shares the velocity range out evenly between the pad's loaded layers, Layer 1 softest. See <a href="#layers">section 12</a>.</td></tr>
+    <tr><td>Snap to transients</td><td>Moves Start and End onto the nearest detected hits.</td></tr>
+    <tr><td>Bounce (B)</td><td>Renders the pad with all its settings to a new sample on the next empty pad.</td></tr>
+    <tr><td>Grab REAPER item (Ctrl+G)</td><td>Puts the selected REAPER item onto the pad, as you hear it. See <a href="#reaper-extras">section 16</a>.</td></tr>
+    <tr><td>Render stretch / Render formants</td><td>Finishes background stretch or formant processing right away.</td></tr>
+  </tbody>
+</table>
+
+<h3>Kit actions</h3>
+<table>
+  <caption>Kit action buttons</caption>
+  <thead><tr><th scope="col">Button</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Undo / Redo (Ctrl+Z / Ctrl+Y)</td><td>Steps back and forward through changes.</td></tr>
+    <tr><td>Save kit / Load kit (Ctrl+S / Ctrl+O)</td><td>Saves or opens a <code>.asamplerkit</code> file. Saving asks whether to store sample locations, copy the samples next to the kit, or save a template of settings only. See <a href="#kits">section 17</a>.</td></tr>
+    <tr><td>Factory kit</td><td>Chooses Trap, Boom Bap, Lo-Fi or 808 Set. Changes settings only, never samples.</td></tr>
+    <tr><td>Relink samples</td><td>Finds missing samples by name in a folder you choose. The label says how many are missing.</td></tr>
+    <tr><td>Clear all pads</td><td>Resets every pad, after asking you to confirm. Undoable.</td></tr>
+    <tr><td>Export slice MIDI</td><td>Writes a MIDI file with one note per pad slice.</td></tr>
+    <tr><td>Keyboard help (F1)</td><td>Speaks the keyboard shortcuts.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="params">7. The parameter list and the Focus group</h2>
+<p>ASampler has about 4,800 parameters: 146 for each of 32 pads, plus globals. Three things keep that manageable.</p>
+<h3>The Focus group</h3>
+<p>At the top of the list, after the global parameters, is <strong>Focused Pad</strong>, then 146 parameters named "Focus Volume", "Focus Filter Cutoff" and so on. They always control the focused pad, and they read that pad's values. Change Focused Pad, or select a pad in the editor, and the whole Focus group switches to it. You can shape any pad without leaving the top of the list.</p>
+<h3>Pad prefixes</h3>
+<p>Each pad's own parameters start with its number: "P1 Volume", "P9 Filter Cutoff". Even in a flat list, the name tells you which pad it belongs to. Use these for automation that must always target the same pad.</p>
+<h3>Sections</h3>
+<p>Every pad, and the Focus group, is divided into the same sections, always in this order:</p>
+<ol>
+  <li>Main</li>
+  <li>Trigger</li>
+  <li>Envelope</li>
+  <li>Slice</li>
+  <li>Filter</li>
+  <li>Layers</li>
+  <li>Repeat</li>
+  <li>Pitch and Glide</li>
+  <li>Character</li>
+  <li>Modulation</li>
+  <li>Time and Formant</li>
+  <li>Stereo</li>
+</ol>
+<p>Hosts that show parameter groups, such as REAPER's FX parameter menus, show these as submenus.</p>
+<h3>Typing values</h3>
+<p>Values are spoken with units, for example "-6.00 dB", "120 Hz", "C1", "1/16" or "250.0 ms". Where the host lets you type a value, as OSARA's parameter dialog does, you can type it the same way. For slice points, see <a href="#slicing">section 9</a>.</p>
+
+<h2 id="samples">8. Loading, browsing and describing samples</h2>
+<h3>Loading</h3>
+<p><kbd>L</kbd> or the Load button opens the system's standard file dialog. Supported formats:</p>
+<ul>
+  <li>WAV, AIFF, FLAC, Ogg Vorbis and MP3</li>
+</ul>
+<p>Files load in the background, so REAPER never freezes. You hear "Loading..." when it starts and the result when it finishes. The sample goes into the layer chosen by the global <strong>Edit Layer</strong> parameter (Layer 1 by default).</p>
+<p>Other ways to load:</p>
+<ul>
+  <li><strong>Drag and drop</strong> audio files from Explorer or Finder onto a pad.</li>
+  <li><strong>Paste</strong>: copy files in Explorer (<kbd>Ctrl</kbd>+<kbd>C</kbd>), then press <kbd>Ctrl</kbd>+<kbd>V</kbd> in ASampler. They go to the selected pad.</li>
+</ul>
+<h3>Loading several files at once</h3>
+<p>Choose several files in the dialog (<kbd>Ctrl</kbd> or <kbd>Shift</kbd> with the arrow keys and Space), drop several, or paste several, and a menu asks where they go. Each choice says what it will replace:</p>
+<ul>
+  <li><strong>One per pad</strong>: the files go onto the selected pad and the pads after it, in natural order ("kick 2" before "kick 10"). Files beyond Pad 32 are skipped, and you are told how many.</li>
+  <li><strong>Round-robin layers</strong>: up to 8 files become the selected pad's layers, and Layer Mode is set to Round Robin. Any other layers on the pad are cleared.</li>
+  <li><strong>Velocity layers</strong>: the same, with Layer Mode set to Velocity and the velocity range shared evenly, the first file softest.</li>
+</ul>
+<p>All of it is one background load, one announcement and one undo step.</p>
+<h3>Trimming silence</h3>
+<p><strong>Trim silence</strong> moves the pad's Start to just before the sound begins (where it comes within 30 dB of its peak) and its End to where it has died away (60 dB below the peak). It is measured on the current slice, changes no audio, and can be undone. Turn on the global <strong>Trim Silence On Load</strong> to do this automatically, over the whole sample, every time a sample is loaded.</p>
+<h3>Browsing</h3>
+<p><kbd>N</kbd> and <kbd>P</kbd> load the next and previous audio file from the folder of the pad's current sample. Files are in natural order, so "kick 2" comes before "kick 10". The pad's settings stay as they are, and the pad plays the new sample at once, so you can step through a folder of kicks and hear each one in context. You hear the name and position, for example "kick 07.wav, 7 of 32". Browsing can be undone.</p>
+<h3>Trying samples before you keep them</h3>
+<p><kbd>Shift</kbd>+<kbd>N</kbd> and <kbd>Shift</kbd>+<kbd>P</kbd> also step through the folder, but only <em>try</em> each file: the pad plays the candidate with all its settings, and its own sample stays underneath. This is the quickest way to pick the right kick.</p>
+<ol>
+  <li>Select the pad and press <kbd>Shift</kbd>+<kbd>N</kbd>. You hear the next file on the pad and "Trying kick 08, 8 of 32. Enter keeps it, Escape goes back".</li>
+  <li>Keep pressing <kbd>Shift</kbd>+<kbd>N</kbd> or <kbd>Shift</kbd>+<kbd>P</kbd>. Each candidate plays as you reach it.</li>
+  <li>Press <kbd>Enter</kbd> to keep the one you are on, or <kbd>Escape</kbd> to go back to the pad's own sample.</li>
+</ol>
+<p>Try it while the beat plays: with REAPER's transport running, the candidate is not auditioned on its own, it simply plays in the beat wherever the pad's notes are. On an empty pad, trying starts in the folder of the last sample you loaded.</p>
+<h3>Describe</h3>
+<p><kbd>I</kbd> speaks a description of the pad's current slice, starting with the pad number and sample name. It covers:</p>
+<ul>
+  <li><strong>Length</strong> of the current slice, where it sits in the whole sample, and how many bars it lasts at the project tempo.</li>
+  <li><strong>Peak and RMS level</strong>: RMS is the average loudness.</li>
+  <li><strong>Hits</strong>: the number of detected attacks.</li>
+  <li><strong>Tempo</strong>, for loops. Use it to set Original BPM for tempo sync.</li>
+  <li><strong>Key</strong>, for melodic material, or <strong>pitch</strong>, for single notes such as an 808. Use the pitch to set the root note. Noise and drums report no key rather than a guess.</li>
+</ul>
+<h3>Missing samples</h3>
+<p>ASampler stores where each sample was loaded from. If you move a project to another computer, or move your sample folder, it keeps the references and says how many are missing. Press Relink samples, choose the folder that now holds them, and they are found by file name, including in subfolders.</p>
+
+<h2 id="slicing">9. Slicing and audition</h2>
+<p>Each pad plays the region from <strong>Start</strong> to <strong>End</strong> of its sample. Both read as time into the sample, for example "1.250 s" or "480.0 ms". When typing a value you can use:</p>
+<ul>
+  <li>seconds: <code>1.25</code> or <code>1.25 s</code></li>
+  <li>milliseconds: <code>480 ms</code></li>
+  <li>a percentage of the sample: <code>50%</code></li>
+</ul>
+<p><strong>Audition On Edit</strong> is a global parameter, on by default. When you stop changing Start or End, ASampler plays the pad from the new point:</p>
+<ul>
+  <li>after a Start change, from Start</li>
+  <li>after an End change, from just before End, so you hear where it cuts off</li>
+</ul>
+<p>This lets you place boundaries by ear. It never plays while REAPER's transport is running, so automation never triggers it.</p>
+<h3>Editing Start and End by ear</h3>
+<p>For fine placement, press <kbd>T</kbd> to edit Start or <kbd>O</kbd> to edit End (or the Edit Start and Edit End buttons). Then:</p>
+<ul>
+  <li><kbd>Right</kbd> and <kbd>Left</kbd> (or <kbd>Up</kbd> and <kbd>Down</kbd>) move the point 10 ms later or earlier. With <kbd>Ctrl</kbd> the step is 1 ms, with <kbd>Shift</kbd> 100 ms. <kbd>Home</kbd> and <kbd>End</kbd> go to the start and end of the sample.</li>
+  <li>Each step speaks the new position and plays a short snippet. For Start you hear the first 80 ms from the point. For End you hear the 150 ms leading up to it <em>backwards</em>, so the first thing you hear is exactly where the sound is cut.</li>
+  <li><kbd>Space</kbd> plays the snippet again.</li>
+  <li><kbd>Enter</kbd> keeps the new point, as one undo step. <kbd>Escape</kbd> leaves it as it was.</li>
+</ul>
+<p>Nothing changes until you press <kbd>Enter</kbd>, so you can explore freely.</p>
+<p>Cleaning up boundaries:</p>
+<ul>
+  <li><strong>Zero-Cross Snap</strong> moves Start, End and loop points to the nearest point where the waveform crosses zero, which removes clicks.</li>
+  <li><strong>Snap to transients</strong> (button) moves Start and End onto the nearest detected hit. Use it when a chop landed slightly early or late.</li>
+  <li><strong>Fade In</strong> and <strong>Fade Out</strong> add short fades at the edges of the slice.</li>
+</ul>
+<p>Looping: set <strong>Loop Mode</strong> to Forward or Ping-Pong and the pad loops between <strong>Loop Start</strong> and <strong>Loop End</strong> while the note is held. <strong>Loop Crossfade</strong> smooths the join in Forward mode.</p>
+
+<h2 id="chop">10. Chopping a loop across pads</h2>
+<ol>
+  <li>Load a loop onto any pad and select it.</li>
+  <li>Set the global <strong>Chop Count</strong> to 2, 4, 8, 16 or 32 slices. 32 fills both banks.</li>
+  <li>Set the global <strong>Chop Mode</strong>:
+    <ul>
+      <li><strong>Equal</strong> cuts equal lengths, which suits a loop that is exactly in time.</li>
+      <li><strong>Transients</strong> cuts at detected hits. Use it for drum breaks.</li>
+      <li><strong>Transients (Spectral)</strong> also finds hits that change tone without getting louder, such as hi-hats under a kick.</li>
+    </ul>
+  </li>
+  <li>Press the Chop button. Its label says what it will replace, for example "Chop Pad 1 into 16, replacing pads 1 to 16".</li>
+  <li>Each pad now plays one slice, in order. Use Snap to transients or Start and End to adjust any slice, and Undo if you don't like the result. The whole chop is one undo step.</li>
+  <li>Press Export slice MIDI to write a MIDI file that plays the slices in their original order. Insert it into REAPER to rebuild the loop, then rearrange the notes.</li>
+</ol>
+
+<h2 id="pads">11. Pads, notes and keyboard mode</h2>
+<p>Note names in ASampler use the convention where <strong>middle C (MIDI 60) is C3</strong>, the default in REAPER and most drum machines. Pads 1 to 16 default to notes C1 to D#2 (MIDI 36 to 51), and pads 17 to 32 carry on from E2 to G3 (MIDI 52 to 67).</p>
+<h3>Mode</h3>
+<ul>
+  <li><strong>Fixed</strong> (default): the pad plays on its one <strong>Note</strong>. Use it for drums.</li>
+  <li><strong>Keyboard</strong>: the pad plays every note from <strong>Low Note</strong> to <strong>High Note</strong>, pitched relative to <strong>Note</strong>, which becomes the root. Use it for 808s, bass and melodic chops. Other pads can stay Fixed in the same kit, and one note never plays two things:
+    <ul>
+      <li>A Fixed pad with a sample loaded keeps its own note. The Keyboard pad skips that note.</li>
+      <li>A Fixed pad that still has only the built-in tone steps aside. The Keyboard pad plays that note instead.</li>
+    </ul>
+    So if you have loaded drums on pads 1 to 8, notes C1 to G1 play the drums and every other note plays the Keyboard pad. To use the drum notes for the Keyboard pad too, move the drum pads' notes or put the melodic sound in its own ASampler instance.</li>
+</ul>
+<h3>Learning notes from a MIDI keyboard</h3>
+<p>Press <kbd>K</kbd> and play a note on your MIDI keyboard: it becomes the selected pad's <strong>Note</strong> (the root, in Keyboard mode). The Learn note button also offers <strong>Low Note</strong> and <strong>High Note</strong>, to set a Keyboard pad's range by playing its lowest and highest keys. The note you play to learn does not sound. <kbd>Escape</kbd> cancels. If you set Low Note above High Note, or the other way round, the other end moves with it so the range stays valid.</p>
+<h3>Scale Lock</h3>
+<p>Set the global <strong>Key</strong> and <strong>Scale</strong>, then turn on <strong>Scale Lock</strong> on a keyboard pad. Notes outside the scale snap to the nearest note in it, so a chop can't play off-key.</p>
+<h3>Choke groups</h3>
+<p>Pads with the same <strong>Choke Group</strong> stop each other. Put the closed and open hi-hats in one group and the open hat is cut when the closed hat plays.</p>
+<h3>Voices</h3>
+<p><strong>Max Voices</strong> sets how many notes a pad can play at once (default 8). Set it to 1 for a monophonic pad: each new note cuts the previous one, and with Glide Mode on, slides from it. ASampler has 256 voices in total, enough for every pad to play 8 notes at once.</p>
+<h3>One Shot, Mute and Solo</h3>
+<ul>
+  <li><strong>One Shot</strong> plays the whole slice regardless of how long the note is held. Use it for drums.</li>
+  <li><strong>Mute</strong> silences a pad.</li>
+  <li><strong>Solo</strong> silences every pad that isn't soloed.</li>
+</ul>
+<p>Muted pads keep playing silently, as in a mixer, so unmuting mid-note picks up where the sound would be.</p>
+
+<h2 id="layers">12. Layers and multisampling</h2>
+<p>Each pad can hold eight samples, called layers. Choose which layer Load, Reset and Normalise act on with the global <strong>Edit Layer</strong> parameter. The pad's <strong>Layer Mode</strong> decides which layer plays:</p>
+<table>
+  <caption>Layer modes</caption>
+  <thead><tr><th scope="col">Mode</th><th scope="col">Which layer plays</th><th scope="col">Typical use</th></tr></thead>
+  <tbody>
+    <tr><td>Velocity</td><td>Each layer plays for velocities between its <strong>Vel Low</strong> and <strong>Vel High</strong>. Layers whose ranges overlap play together. A hit that no loaded layer covers plays the layer with the nearest range.</td><td>A snare recorded at several strengths, or a kick stacked with a sub.</td></tr>
+    <tr><td>Round Robin</td><td>Each hit plays the next layer in turn.</td><td>Natural-sounding repeated hits, so a roll doesn't sound like a machine gun.</td></tr>
+    <tr><td>Random</td><td>A random layer each hit.</td><td>Variation without a pattern.</td></tr>
+    <tr><td>Key Zones</td><td>Each layer covers its own note range (Layer N Low Note and High Note) and is pitched from its own Layer N Root Note. A note outside every zone uses the layer with the nearest root.</td><td>A multisampled instrument: a bass or keys sampled every few notes, so no sample is stretched far from where it was recorded.</td></tr>
+  </tbody>
+</table>
+<p><strong>Layer N Gain</strong> balances the layers. Normalise sets it automatically.</p>
+<h3>Velocity ranges and stacking</h3>
+<p>By default Layers 1 to 4 split velocity into four bands (0 to 31, 32 to 63, 64 to 95, 96 to 127) and Layers 5 to 8 cover the whole range. Set <strong>Layer N Vel Low</strong> and <strong>Vel High</strong> to change them. Ranges may overlap: give a clap and a snare the same range and every hit plays both, which is how layered drums are built. The Spread velocity layers button shares 0 to 127 out evenly among the loaded layers, Layer 1 softest, and loading several files as velocity layers does the same. A stacked pad can sound Max Voices notes per layer, so stacking never cuts itself short.</p>
+<h3>Release layers</h3>
+<p>Set a layer's <strong>Trigger</strong> to <strong>Release</strong> and it plays when the note is let go instead of when it starts: a piano's damper noise, a string release, a vinyl stop. It plays once at the velocity of the original hit, and never loops. A release layer also responds to its velocity range.</p>
+<h3>Tuning each layer</h3>
+<p><strong>Layer N Transpose</strong> (in semitones) and <strong>Fine Tune</strong> (in cents) retune one layer against the others, for example to tune a stacked sub to the kick.</p>
+
+<h2 id="sound">13. Shaping the sound</h2>
+<h3>Envelope</h3>
+<p>Attack, Decay, Sustain and Release shape volume over each note. The defaults (instant attack, full sustain, 50 ms release) play the sample as it is.</p>
+<h3>Filter</h3>
+<p><strong>Filter Mode</strong> is Low-pass, High-pass or Band-pass, set with Filter Cutoff and Filter Resonance. The filter has its own envelope:</p>
+<ul>
+  <li><strong>Filter Env Amount</strong> sets how far each hit sweeps the cutoff, in octaves, up or down.</li>
+  <li>Filter Env Attack, Decay, Sustain and Release shape the sweep.</li>
+</ul>
+<p>A positive amount with a short decay gives the classic plucked bass sound.</p>
+<h3>Character</h3>
+<p>Character effects come after the filter, in this order:</p>
+<ol>
+  <li><strong>Saturation</strong>, with <strong>Saturation Mode</strong>:
+    <ul>
+      <li>Tube: warm, rounded</li>
+      <li>Tape: soft compression</li>
+      <li>Hard Fold: aggressive, metallic</li>
+    </ul>
+  </li>
+  <li><strong>SR Reduce</strong>: lowers the sample rate, for aliasing grit like old samplers.</li>
+  <li><strong>Bit Depth</strong>: crushes the resolution; Off means full quality.</li>
+</ol>
+<h3>Pitch and glide</h3>
+<ul>
+  <li><strong>Pitch</strong> transposes the pad by up to two octaves, in fine steps.</li>
+  <li><strong>Pitch Env Amount</strong> and <strong>Pitch Env Time</strong> start each note sharp or flat and slide it back. A few semitones over 30 to 80 ms gives an 808 or kick its punch.</li>
+  <li><strong>Glide Mode</strong> slides between notes on a keyboard pad:
+    <ul>
+      <li>Legato: only while notes overlap</li>
+      <li>Always: on every note</li>
+      <li>The "(rate)" versions read Glide Time as milliseconds per semitone, so long jumps take longer, like a real slide.</li>
+    </ul>
+  </li>
+  <li><strong>Vel to Glide</strong> shortens the slide on harder notes, so you can control each glide from the piano roll.</li>
+</ul>
+<h3>Modulation</h3>
+<p>Each pad has two <strong>LFOs</strong>. Each one wobbles one destination: pitch, filter cutoff, volume or pan. Set Rate, Depth and Shape (Sine, Triangle, Square or Saw). When both LFOs move the same destination, their effects add up. Use one for a slow filter sweep and the other for a fast wobble, or vibrato on pitch while the first LFO moves the filter.</p>
+<p><strong>LFO Sync</strong> and <strong>LFO 2 Sync</strong> lock an LFO to the project tempo. Choose a note length, from 4 bars down to 1/32, including triplets and dotted values. One LFO cycle then lasts exactly that long, and the Rate in Hz is ignored. Off uses the Rate.</p>
+<p>The <strong>mod wheel</strong> (MIDI CC 1) can move one destination per pad. Set <strong>Mod Wheel Destination</strong> and <strong>Mod Wheel Amount</strong>:</p>
+<ul>
+  <li>Pitch, Filter Cutoff, Volume and Pan use the same ranges as the LFO. A negative amount works in reverse: with Volume at -100%, pushing the wheel up fades the pad out.</li>
+  <li>LFO 1 Depth and LFO 2 Depth add the wheel to that LFO's depth. Route an LFO to Pitch at 0% depth, send the wheel to its depth, and the wheel brings in vibrato.</li>
+</ul>
+<p>The wheel moves notes that are already playing, and it is smoothed, so it doesn't step or click.</p>
+<p>Velocity can do more than set volume:</p>
+<ul>
+  <li><strong>Vel to Cutoff</strong> opens the filter on harder hits, by up to 4 octaves.</li>
+  <li><strong>Vel to Pitch</strong> raises or lowers pitch with velocity.</li>
+  <li><strong>Vel to Start</strong> starts harder hits later into the sample, skipping more of the attack.</li>
+</ul>
+<p><strong>Velocity Curve</strong> shapes how velocity sets volume:</p>
+<ul>
+  <li>Soft: quiet hits are louder</li>
+  <li>Linear</li>
+  <li>Hard: more effort for full volume</li>
+  <li>Fixed: every hit at full volume</li>
+</ul>
+<h3>Stereo</h3>
+<ul>
+  <li><strong>Stereo Width</strong> goes from Mono through Normal to 200%.</li>
+  <li><strong>Mono Below</strong> makes everything under the chosen frequency mono, which keeps 808s and bass solid on club systems and phones.</li>
+</ul>
+<p>Pan places the pad left or right.</p>
+<h3>Live changes</h3>
+<p>Changing a parameter while a note is held affects that note immediately, so you can hear what you are adjusting.</p>
+
+<h2 id="time">14. Tempo sync, time stretch and formant</h2>
+<h3>Tempo sync</h3>
+<p>Turn on <strong>Tempo Sync</strong> and set <strong>Original BPM</strong> to the loop's tempo. Describe (<kbd>I</kbd>) estimates it. The pad now follows the project tempo. <strong>Stretch Mode</strong> chooses how:</p>
+<ul>
+  <li><strong>Repitch</strong> (default) speeds the sample up or down like a turntable or an MPC, so pitch moves with tempo. It uses no extra CPU.</li>
+  <li><strong>Stretch</strong> changes length but keeps the original pitch, so a 90 BPM riff fits an 80 BPM beat in the same key.</li>
+</ul>
+<h3>Formant</h3>
+<p><strong>Formant</strong> shifts the character of a sound, its "body" or vocal size, without changing its pitch:</p>
+<ul>
+  <li>negative values give a bigger, deeper voice</li>
+  <li>positive values give a smaller, brighter one</li>
+</ul>
+<p><strong>Formant Correct</strong> (keyboard pads only) keeps the sample's natural character as you play it up and down the keyboard, so a vocal or bass doesn't chipmunk at high notes or turn muddy at low ones.</p>
+<h3>Speed</h3>
+<p><strong>Speed</strong> plays the sample faster or slower without changing its pitch: +100% is twice as fast, -100% half speed. It works in any Stretch Mode and combines with tempo sync.</p>
+<h3>Keep Length</h3>
+<p>On a Keyboard pad, higher notes normally play shorter, as on a tape machine. <strong>Keep Length</strong> makes every note last as long as the root, so a vocal phrase or a loop stays in time across the keyboard. Turn on Formant Correct as well to keep the voice natural. Like Formant Correct, it prepares one version per semitone in the background.</p>
+<h3>How processing works</h3>
+<p>Stretching and formant shifting are rendered in the background whenever these settings or the project tempo change, and the pad then plays the processed copy. Playback costs no extra CPU. A render starts within a tenth of a second of a change and is quick: a 10-second stereo loop takes about 0.1 to 0.2 seconds. Several pads render at the same time on separate processor cores, Formant Correct renders its per-note versions side by side, and if you keep turning a knob, renders you have already moved past are stopped. Until a render finishes, the pad plays the previous result, or the unprocessed sample the first time. The status line says when it is ready, and the Render stretch and Render formants buttons finish it immediately.</p>
+<p>The stretch engine keeps stereo intact: the two channels are processed together, so the stereo image and the mono sum come out as they went in.</p>
+
+<h2 id="repeat">15. Note repeat, swing and humanize</h2>
+<p>Turn on a pad's <strong>Repeat</strong> and, while you hold its note, the pad retriggers at the <strong>Repeat Rate</strong>, synced to the project tempo. Rates run from 1/4 to 1/32 triplet.</p>
+<ul>
+  <li><strong>Swing</strong> delays every second repeat, for a shuffled feel.</li>
+  <li><strong>Humanize</strong> adds small random changes to timing and velocity.</li>
+</ul>
+<p>Use it for trap hi-hat rolls: hold the note and play with Repeat Rate, or automate it.</p>
+
+<h2 id="outputs">16. Separate outputs and the REAPER routing script</h2>
+<p>ASampler has a main stereo output plus one stereo output per pad. By default everything plays through the main output. When a pad's own output is connected in the host, that pad plays there instead, so it can have its own fader, effects and stem.</p>
+<h3>The routing script</h3>
+<p>The "ASampler: Create pad tracks" script does all the REAPER routing for you. The Windows installer copies it into REAPER's Scripts folder. On a Mac, take it from the <code>scripts</code> folder of the project on GitHub and load it once as described below.</p>
+<ol>
+  <li>Find the action: open the Actions list (<kbd>?</kbd>) and type "pad tracks" in the filter. On Windows the installer has already added it, as "Script: ASampler - Create pad tracks.lua". You can give it a keyboard shortcut in the same list. If it is not there (on a Mac, or if you unchecked the installer's box), load it once: choose New action, then Load ReaScript, and pick <code>ASampler - Create pad tracks.lua</code>. The installer always leaves a copy in the <code>REAPER</code> folder next to this manual.</li>
+  <li>Select the track with ASampler on it. If only one track has ASampler, you don't need to select it.</li>
+  <li>Run the action. It asks how many pads to route; press Enter for 16 (bank A), type 32 for both banks, or type a smaller number, for example 4 for pads 1 to 4 only.</li>
+  <li>The script adds that many tracks, named "ASampler Pad 1", "ASampler Pad 2" and so on, directly below the ASampler track. It sends each pad's output to its track and widens the ASampler track to carry the extra channels. OSARA speaks the result. The whole action is one undo step.</li>
+</ol>
+<p>Pads you didn't route keep playing on the ASampler track. Running the script again only adds what is missing, so you can route 4 pads now and the rest later.</p>
+<h3>Doing it by hand</h3>
+<ol>
+  <li>Set the ASampler track to 2 channels plus 2 per pad you want to route, up to 66 channels for all 32 pads, in its routing window.</li>
+  <li>Make sure ASampler's output pins are connected one to one, in the plugin pin connector.</li>
+  <li>Add a send from the ASampler track to each new track. Pad 1 uses source channels 3 and 4, Pad 2 uses 5 and 6, and so on up to Pad 32 on 65 and 66.</li>
+</ol>
+
+<h3 id="reaper-extras">REAPER extras</h3>
+<ul>
+  <li><kbd>Ctrl</kbd>+<kbd>R</kbd> in the editor toggles REAPER's record, without leaving the plugin window.</li>
+  <li><kbd>Ctrl</kbd>+<kbd>G</kbd>, or the Grab REAPER item button, puts the one selected item in REAPER onto the selected pad as you hear it: fades, volume, playback rate and take effects included. ASampler glues a copy, takes the result, and undoes the glue, so your project is left as it was. The file is kept in <code>%APPDATA%\ASampler\grabbed</code>. Select exactly one item first; you are told if none or several are selected.</li>
+</ul>
+<p>These work only when ASampler runs inside REAPER. In other hosts they say so.</p>
+
+<h2 id="kits">17. Kits, factory kits and programs</h2>
+<h3>Saving and loading kits</h3>
+<p>Save kit (<kbd>Ctrl</kbd>+<kbd>S</kbd>) stores everything in a <code>.asamplerkit</code> file; Load kit (<kbd>Ctrl</kbd>+<kbd>O</kbd>) opens one. REAPER projects already save all of this, so kits are for reusing a setup across projects. Saving asks which kind of kit to make:</p>
+<ul>
+  <li><strong>Kit with sample paths</strong>: all parameters, pad names, and where each sample is.</li>
+  <li><strong>Kit with copies of its samples</strong>: the same, and every sample is copied into a folder next to the kit, named after it ("Trap kit samples"). Move or share the kit file together with that folder and it still finds its samples, on any computer.</li>
+  <li><strong>Template</strong>: settings only. Loading a template changes every parameter and leaves your samples and pad names alone, like a factory kit.</li>
+</ul>
+<h3>Factory kits</h3>
+<p>The four factory kits set up a playing style and never change your samples.</p>
+<p>Every factory kit first sets up the following on all pads:</p>
+<ul>
+  <li>one-shot drums with short fades and Zero-Cross Snap</li>
+  <li>pads 2 and 3 as the closed and open hi-hat in choke group 1</li>
+</ul>
+<p>Then each kit adds its own settings:</p>
+<table>
+  <caption>Factory kits</caption>
+  <thead><tr><th scope="col">Kit</th><th scope="col">What it sets</th></tr></thead>
+  <tbody>
+    <tr><td>Trap</td><td>Tight decays, 1/32 note repeat. Pad 1 becomes a keyboard 808 (C0 to C3) with legato glide, mono voicing and pitch punch.</td></tr>
+    <tr><td>Boom Bap</td><td>Rounder releases, light tube saturation, a gentle low-pass at 12 kHz, 1/16 repeat with swing and humanize.</td></tr>
+    <tr><td>Lo-Fi</td><td>Tape saturation, 12-bit, halved sample rate, low-pass at 7 kHz, more swing and humanize.</td></tr>
+    <tr><td>808 Set</td><td>Every pad gets a long 808 shape with legato glide, mono voicing, long release and pitch punch, and no choke groups. Pad 1 is set to Keyboard across C0 to C3; the other pads stay on their own notes.</td></tr>
+  </tbody>
+</table>
+<h3>Programs</h3>
+<p>The factory kits are also ASampler's programs:</p>
+<ul>
+  <li>Program 0, "Current", is your own settings.</li>
+  <li>Programs 1 to 4 are the kits.</li>
+</ul>
+<p>Choose them from the host's preset menu, or send a MIDI program change if your host passes program changes to plugins.</p>
+
+<h2 id="tools">18. Copy, paste, bounce, normalise, MIDI export</h2>
+<ul>
+  <li><strong>Copy and Paste</strong>: select a pad and press Copy, select another and press Paste. All settings, samples and the pad's name are copied. Use it to build variations of a sound.</li>
+  <li><strong>Apply settings to other pads</strong>: the button opens a menu. Choose <em>To all 32 pads</em> or <em>To this bank</em>, then a section, then one setting (each shows the selected pad's value) or the whole section. For example, give every pad in the bank the same Release, or the whole Envelope section of this pad. The result says how many pads changed, and it is one undo step.</li>
+  <li><strong>Bounce</strong> (<kbd>B</kbd>) renders the selected pad to a new WAV file, with every setting applied: slice, envelope, filter, character, stretch and formant. It loads the result onto the next empty pad, so you can commit a sound and keep building on it, or resample. Bounces are saved in your ASampler bounces folder (<code>%APPDATA%\ASampler\bounces</code> on Windows) and stay available to the project.</li>
+  <li><strong>Normalise</strong> sets the layer's gain so it peaks at -1 dB. It doesn't change the file and can be undone.</li>
+  <li><strong>Export slice MIDI</strong> writes a <code>.mid</code> file with one note per pad slice, in order. You choose where to save it.</li>
+</ul>
+
+<h2 id="midilearn">19. MIDI learn and controllers</h2>
+<ol>
+  <li>Set the global <strong>MIDI Learn</strong> parameter to Armed.</li>
+  <li>Touch the parameter you want to control, in REAPER's parameter list or by moving its automation.</li>
+  <li>Move a knob or fader on your MIDI controller. ASampler binds that controller (CC) to the parameter and disarms.</li>
+</ol>
+<p>Bindings are saved with the project and with kits. Learning a controller that is already bound moves it to the new parameter. You can also use REAPER's own Learn and parameter modulation, which work with every ASampler parameter.</p>
+<p><strong>Pitch Bend Range</strong> sets how far the pitch wheel bends every sounding pad, from 1 to 24 semitones (default 2).</p>
+
+<h2 id="undo">20. Undo and redo</h2>
+<p>Every parameter change and every action can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the Undo button), and redone with <kbd>Ctrl</kbd>+<kbd>Y</kbd>. Undoable actions include loading, browsing, chopping, pasting, applying settings to pads, trimming, editing Start and End by ear, learning notes, factory kits, normalising and clear all. A chop across 32 pads is one step. Selecting pads is not recorded, so walking the pad grid never fills the history. Loading a project starts a fresh history.</p>
+
+<h2 id="recipes">21. Recipes</h2>
+<h3>A gliding 808</h3>
+<ol>
+  <li>Load an 808 onto a pad. Press <kbd>I</kbd>; Describe tells you its pitch, for example "pitch F0".</li>
+  <li>Set Mode to Keyboard, Note to that pitch, Low Note to C0 and High Note to C3. Notes that other pads use (C#1 to D#2 by default) keep playing those pads, so for the full range put the 808 in its own ASampler instance.</li>
+  <li>Set Max Voices to 1 and Glide Mode to Legato, with Glide Time 60 to 120 ms.</li>
+  <li>Add punch with Pitch Env Amount +3 to +5 semitones and Pitch Env Time 40 ms.</li>
+  <li>Set Mono Below to 120 Hz. Make sure One Shot is off, so notes end when released, and set Release to around 300 ms.</li>
+  <li>Play overlapping notes to slide. Turn on Formant Correct if the 808 sounds thin at high notes.</li>
+</ol>
+<h3>Hi-hats with rolls</h3>
+<ol>
+  <li>Closed hat on Pad 2 and open hat on Pad 3, both in Choke Group 1.</li>
+  <li>On Pad 2, turn on Repeat, set Repeat Rate to 1/16, and add Humanize 10 to 20%.</li>
+  <li>Hold the note and automate Repeat Rate to 1/32 or 1/16T for rolls.</li>
+</ol>
+<h3>Fitting a sample loop to your tempo</h3>
+<ol>
+  <li>Load the loop, press <kbd>I</kbd>, and note the tempo.</li>
+  <li>Turn on Tempo Sync and set Original BPM to that tempo.</li>
+  <li>For the MPC sound, leave Stretch Mode on Repitch. To keep the key, choose Stretch.</li>
+  <li>Chop it across pads if you want to rearrange it (<a href="#chop">section 10</a>).</li>
+</ol>
+<h3>A playable vocal chop</h3>
+<ol>
+  <li>Load a vocal phrase, set Start and End around one syllable, and listen with Audition On Edit.</li>
+  <li>Set Mode to Keyboard, turn on Scale Lock, and set the global Key and Scale to your song's.</li>
+  <li>Turn on Formant Correct so the voice stays natural across the keyboard, or use Formant to change its character.</li>
+  <li>Bounce it to commit the result if you want to layer or chop it further.</li>
+</ol>
+<h3>A dusty lo-fi kit</h3>
+<p>Choose Factory kit, then Lo-Fi, then fine-tune Saturation, Bit Depth and SR Reduce per pad in the Character section. A slow, shallow LFO on Pitch (0.3 Hz, 3%) adds tape wobble.</p>
+
+<h2 id="reference">22. Parameter reference</h2>
+<p>Ranges and defaults are as ASampler displays them. Time values on Start, End and the loop points depend on the loaded sample; the defaults cover the whole sample.</p>
+
+<h3 id="ref-global">Global parameters</h3>
+<div class="tablewrap"><table>
+  <caption>Global parameters</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Master Gain</td><td>-60 to +12 dB</td><td>0 dB</td><td>Overall output level.</td></tr>
+    <tr><td>Chop Count</td><td>2, 4, 8, 16, 32</td><td>16</td><td>Number of slices, and pads filled, by Chop.</td></tr>
+    <tr><td>Chop Mode</td><td>Equal, Transients, Transients (Spectral)</td><td>Equal</td><td>Where Chop cuts.</td></tr>
+    <tr><td>Edit Layer</td><td>Layer 1 to 8</td><td>Layer 1</td><td>Layer that Load, Reset and Normalise act on.</td></tr>
+    <tr><td>MIDI Learn</td><td>Off, Armed</td><td>Off</td><td>Binds the next controller you move to the last touched parameter.</td></tr>
+    <tr><td>Pitch Bend Range</td><td>1 to 24 st</td><td>2 st</td><td>How far the pitch wheel bends.</td></tr>
+    <tr><td>Audition On Edit</td><td>Off, On</td><td>On</td><td>Plays a pad when its Start or End stops changing, while the transport is stopped.</td></tr>
+    <tr><td>Key</td><td>C to B</td><td>C</td><td>Key for Scale Lock.</td></tr>
+    <tr><td>Scale</td><td>Chromatic, Major, Natural Minor, Harmonic Minor, Pentatonic Minor, Pentatonic Major, Blues, Dorian, Phrygian, Mixolydian</td><td>Chromatic</td><td>Scale for Scale Lock. Chromatic allows every note.</td></tr>
+    <tr><td>Computer Key Velocity</td><td>1 to 127</td><td>100</td><td>Velocity of pads played from the computer keyboard.</td></tr>
+    <tr><td>Trim Silence On Load</td><td>Off, On</td><td>Off</td><td>Trims leading silence and the dead tail whenever a sample is loaded.</td></tr>
+    <tr><td>Focused Pad</td><td>Pad 1 to 32</td><td>Pad 1</td><td>The pad the Focus group controls. Follows the editor's pad grid.</td></tr>
+  </tbody>
+</table></div>
+
+<p>The per-pad parameters below appear once per pad ("P1 Volume" to "P32 Volume") and once in the Focus group ("Focus Volume").</p>
+
+<h3 id="ref-main">Main section</h3>
+<div class="tablewrap"><table>
+  <caption>Main section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Volume</td><td>-60 to +12 dB</td><td>0 dB</td><td>Pad level.</td></tr>
+    <tr><td>Pan</td><td>L100 to R100</td><td>C</td><td>Left-right position.</td></tr>
+    <tr><td>Pitch</td><td>-24 to +24 st</td><td>0 st</td><td>Transposition, in fine steps.</td></tr>
+    <tr><td>Choke Group</td><td>None, Group 1 to 16</td><td>None</td><td>Pads in the same group stop each other.</td></tr>
+    <tr><td>Reverse</td><td>Off, On</td><td>Off</td><td>Plays the slice backwards.</td></tr>
+    <tr><td>One Shot</td><td>Off, On</td><td>Off</td><td>Plays the whole slice regardless of note length.</td></tr>
+    <tr><td>Mute</td><td>Off, On</td><td>Off</td><td>Silences the pad.</td></tr>
+    <tr><td>Solo</td><td>Off, On</td><td>Off</td><td>Silences every pad that isn't soloed.</td></tr>
+    <tr><td>Max Voices</td><td>1 to 8</td><td>8</td><td>Notes the pad can play at once. 1 is monophonic.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-trigger">Trigger section</h3>
+<div class="tablewrap"><table>
+  <caption>Trigger section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Note</td><td>C-2 to G8</td><td>C1 upwards: C1 to D#2 for pads 1 to 16, E2 to G3 for pads 17 to 32</td><td>Fixed mode: the note that plays the pad. Keyboard mode: the root, where the sample plays at its own pitch.</td></tr>
+    <tr><td>Mode</td><td>Fixed, Keyboard</td><td>Fixed</td><td>One note, or a range of notes pitched from the root.</td></tr>
+    <tr><td>Low Note</td><td>C-2 to G8</td><td>C-2</td><td>Lowest note in Keyboard mode.</td></tr>
+    <tr><td>High Note</td><td>C-2 to G8</td><td>G8</td><td>Highest note in Keyboard mode.</td></tr>
+    <tr><td>Velocity Curve</td><td>Fixed, Soft, Linear, Hard</td><td>Linear</td><td>How velocity sets volume. Fixed ignores velocity.</td></tr>
+    <tr><td>Scale Lock</td><td>Off, On</td><td>Off</td><td>Snaps incoming notes to the global Key and Scale (Keyboard mode).</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-envelope">Envelope section</h3>
+<div class="tablewrap"><table>
+  <caption>Envelope section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Attack</td><td>0 ms to 5 s</td><td>0 ms</td><td>Fade-in time at note start.</td></tr>
+    <tr><td>Decay</td><td>0 ms to 5 s</td><td>0 ms</td><td>Time to fall to the sustain level.</td></tr>
+    <tr><td>Sustain</td><td>0 to 100%</td><td>100%</td><td>Level held while the note is down.</td></tr>
+    <tr><td>Release</td><td>0 ms to 10 s</td><td>50 ms</td><td>Fade-out time after the note ends.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-slice">Slice section</h3>
+<div class="tablewrap"><table>
+  <caption>Slice section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Start</td><td>0 to sample length</td><td>Start of sample</td><td>Where playback begins. Type seconds, ms or %.</td></tr>
+    <tr><td>End</td><td>0 to sample length</td><td>End of sample</td><td>Where playback ends.</td></tr>
+    <tr><td>Loop Mode</td><td>Off, Forward, Ping-Pong</td><td>Off</td><td>Loops between Loop Start and Loop End while the note is held.</td></tr>
+    <tr><td>Loop Start</td><td>0 to sample length</td><td>Start of sample</td><td>Loop beginning.</td></tr>
+    <tr><td>Loop End</td><td>0 to sample length</td><td>End of sample</td><td>Loop end.</td></tr>
+    <tr><td>Fade In</td><td>0 to 500 ms</td><td>0 ms</td><td>Fade at the slice start, to remove clicks.</td></tr>
+    <tr><td>Fade Out</td><td>0 to 500 ms</td><td>0 ms</td><td>Fade at the slice end.</td></tr>
+    <tr><td>Loop Crossfade</td><td>0 to 500 ms</td><td>0 ms</td><td>Smooths the loop join (Forward mode).</td></tr>
+    <tr><td>Zero-Cross Snap</td><td>Off, On</td><td>Off</td><td>Moves slice and loop points to the nearest zero crossing.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-filter">Filter section</h3>
+<div class="tablewrap"><table>
+  <caption>Filter section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Filter Mode</td><td>Off, Low-pass, High-pass, Band-pass</td><td>Off</td><td>Filter type.</td></tr>
+    <tr><td>Filter Cutoff</td><td>20 Hz to 20 kHz</td><td>20 kHz</td><td>Filter frequency.</td></tr>
+    <tr><td>Filter Resonance</td><td>Q 0.10 to Q 10.00</td><td>Q 0.71</td><td>Emphasis at the cutoff. 0.71 is flat.</td></tr>
+    <tr><td>Filter Env Amount</td><td>-8 to +8 oct</td><td>0 oct</td><td>How far each note sweeps the cutoff.</td></tr>
+    <tr><td>Filter Env Attack</td><td>0 ms to 5 s</td><td>1 ms</td><td>Sweep rise time.</td></tr>
+    <tr><td>Filter Env Decay</td><td>0 ms to 5 s</td><td>200 ms</td><td>Sweep fall time.</td></tr>
+    <tr><td>Filter Env Sustain</td><td>0 to 100%</td><td>0%</td><td>Sweep level held while the note is down.</td></tr>
+    <tr><td>Filter Env Release</td><td>0 ms to 5 s</td><td>100 ms</td><td>Sweep return time after the note ends.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-layers">Layers section</h3>
+<div class="tablewrap"><table>
+  <caption>Layers section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Layer Mode</td><td>Velocity, Round Robin, Random, Key Zones</td><td>Velocity</td><td>How a hit picks a layer (<a href="#layers">section 12</a>).</td></tr>
+    <tr><td>Layer 1 to 8 Gain</td><td>-24 to +24 dB</td><td>0 dB</td><td>Level of each layer.</td></tr>
+    <tr><td>Layer 1 to 8 Low Note</td><td>C-2 to G8</td><td>C-2</td><td>Bottom of the layer's zone (Key Zones).</td></tr>
+    <tr><td>Layer 1 to 8 High Note</td><td>C-2 to G8</td><td>G8</td><td>Top of the layer's zone (Key Zones).</td></tr>
+    <tr><td>Layer 1 to 8 Root Note</td><td>C-2 to G8</td><td>C3</td><td>Note at which the layer plays at its own pitch (Key Zones).</td></tr>
+    <tr><td>Layer 1 to 8 Vel Low</td><td>0 to 127</td><td>0, 32, 64, 96 for Layers 1 to 4; 0 for Layers 5 to 8</td><td>Lowest velocity the layer plays (Velocity mode).</td></tr>
+    <tr><td>Layer 1 to 8 Vel High</td><td>0 to 127</td><td>31, 63, 95, 127 for Layers 1 to 4; 127 for Layers 5 to 8</td><td>Highest velocity the layer plays. Overlapping ranges play together.</td></tr>
+    <tr><td>Layer 1 to 8 Trigger</td><td>Press, Release</td><td>Press</td><td>Play when the note starts, or when it is let go.</td></tr>
+    <tr><td>Layer 1 to 8 Transpose</td><td>-24 to +24 st</td><td>0 st</td><td>Retunes the layer in semitones.</td></tr>
+    <tr><td>Layer 1 to 8 Fine Tune</td><td>-100 to +100 cents</td><td>0 cents</td><td>Retunes the layer in cents.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-repeat">Repeat section</h3>
+<div class="tablewrap"><table>
+  <caption>Repeat section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Repeat</td><td>Off, On</td><td>Off</td><td>Retriggers the pad while its note is held.</td></tr>
+    <tr><td>Repeat Rate</td><td>1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T</td><td>1/16</td><td>Repeat speed, synced to tempo.</td></tr>
+    <tr><td>Swing</td><td>0 to 75%</td><td>0%</td><td>Delays every second repeat.</td></tr>
+    <tr><td>Humanize</td><td>0 to 100%</td><td>0%</td><td>Random variation in repeat timing and velocity.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-pitch">Pitch and Glide section</h3>
+<div class="tablewrap"><table>
+  <caption>Pitch and Glide section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Glide Mode</td><td>Off, Legato, Always, Legato (rate), Always (rate)</td><td>Off</td><td>When notes slide into each other. Rate modes read Glide Time per semitone.</td></tr>
+    <tr><td>Glide Time</td><td>0 to 2000 ms</td><td>100 ms</td><td>Slide time (or time per semitone in the rate modes).</td></tr>
+    <tr><td>Pitch Env Amount</td><td>-24 to +24 st</td><td>0 st</td><td>Starting pitch offset that slides back to the note.</td></tr>
+    <tr><td>Pitch Env Time</td><td>0 to 2000 ms</td><td>80 ms</td><td>How long the pitch takes to settle.</td></tr>
+    <tr><td>Vel to Glide</td><td>0 to 100%</td><td>0%</td><td>Harder notes glide faster.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-character">Character section</h3>
+<div class="tablewrap"><table>
+  <caption>Character section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Saturation Mode</td><td>Tube, Tape, Hard Fold</td><td>Tube</td><td>Saturation flavour.</td></tr>
+    <tr><td>Saturation</td><td>0 to 100%</td><td>0%</td><td>Saturation amount.</td></tr>
+    <tr><td>Bit Depth</td><td>2 bit to Off</td><td>Off</td><td>Bit crushing. Off is full resolution.</td></tr>
+    <tr><td>SR Reduce</td><td>Off to /64</td><td>Off</td><td>Divides the sample rate, for aliasing grit.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-modulation">Modulation section</h3>
+<div class="tablewrap"><table>
+  <caption>Modulation section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>LFO Rate</td><td>0.01 to 20 Hz</td><td>1 Hz</td><td>LFO speed.</td></tr>
+    <tr><td>LFO Depth</td><td>0 to 100%</td><td>0%</td><td>LFO amount.</td></tr>
+    <tr><td>LFO Shape</td><td>Sine, Triangle, Square, Saw</td><td>Sine</td><td>LFO waveform.</td></tr>
+    <tr><td>LFO Destination</td><td>Off, Pitch, Filter Cutoff, Volume, Pan</td><td>Off</td><td>What the LFO moves.</td></tr>
+    <tr><td>LFO Sync</td><td>Off, 4 bars, 2 bars, 1 bar, 1/2 to 1/32, triplets, dotted</td><td>Off</td><td>Locks LFO 1 to the project tempo. Off uses LFO Rate.</td></tr>
+    <tr><td>LFO 2 Rate</td><td>0.01 to 20 Hz</td><td>4 Hz</td><td>Second LFO speed.</td></tr>
+    <tr><td>LFO 2 Depth</td><td>0 to 100%</td><td>0%</td><td>Second LFO amount.</td></tr>
+    <tr><td>LFO 2 Shape</td><td>Sine, Triangle, Square, Saw</td><td>Sine</td><td>Second LFO waveform.</td></tr>
+    <tr><td>LFO 2 Destination</td><td>Off, Pitch, Filter Cutoff, Volume, Pan</td><td>Off</td><td>What the second LFO moves. Adds to LFO 1 on the same destination.</td></tr>
+    <tr><td>LFO 2 Sync</td><td>As LFO Sync</td><td>Off</td><td>Locks LFO 2 to the project tempo.</td></tr>
+    <tr><td>Mod Wheel Destination</td><td>Off, Pitch, Filter Cutoff, Volume, Pan, LFO 1 Depth, LFO 2 Depth</td><td>Off</td><td>What the mod wheel (CC 1) moves on this pad.</td></tr>
+    <tr><td>Mod Wheel Amount</td><td>-100% to +100%</td><td>+50%</td><td>How far the wheel at full moves its destination. Negative works in reverse.</td></tr>
+    <tr><td>Vel to Cutoff</td><td>0 to 100%</td><td>0%</td><td>Harder hits open the filter, up to 4 octaves.</td></tr>
+    <tr><td>Vel to Pitch</td><td>-24 to +24 st</td><td>0 st</td><td>Pitch change at full velocity, scaled by velocity.</td></tr>
+    <tr><td>Vel to Start</td><td>0 to 100%</td><td>0%</td><td>Harder hits start later into the sample.</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-time">Time and Formant section</h3>
+<div class="tablewrap"><table>
+  <caption>Time and Formant section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Tempo Sync</td><td>Off, On</td><td>Off</td><td>Follow the project tempo.</td></tr>
+    <tr><td>Original BPM</td><td>40 to 300 BPM</td><td>120 BPM</td><td>The sample's own tempo.</td></tr>
+    <tr><td>Stretch Mode</td><td>Repitch, Stretch</td><td>Repitch</td><td>Follow tempo by speed (pitch moves) or by stretching (pitch kept).</td></tr>
+    <tr><td>Formant</td><td>-12 to +12 st</td><td>Off</td><td>Shifts vocal size or body without changing pitch.</td></tr>
+    <tr><td>Formant Correct</td><td>Off, On</td><td>Off</td><td>Keeps natural character across the keyboard (Keyboard mode).</td></tr>
+    <tr><td>Speed</td><td>-100% (0.50x) to +100% (2.00x)</td><td>Off</td><td>Plays faster or slower without changing pitch.</td></tr>
+    <tr><td>Keep Length</td><td>Off, On</td><td>Off</td><td>Every note lasts as long as the root (Keyboard mode).</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="ref-stereo">Stereo section</h3>
+<div class="tablewrap"><table>
+  <caption>Stereo section</caption>
+  <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Stereo Width</td><td>Mono to 200%</td><td>Normal</td><td>Narrows or widens the stereo image.</td></tr>
+    <tr><td>Mono Below</td><td>Off to 500 Hz</td><td>Off</td><td>Makes everything below this frequency mono.</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="keys">23. Keyboard reference</h2>
+<table>
+  <caption>Editor shortcuts</caption>
+  <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
+  <tbody>
+    <tr><td>Arrow keys</td><td>Move around the pad grid (Up is higher pad numbers)</td></tr>
+    <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>Pad 1 / Pad 32</td></tr>
+    <tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Bank B / bank A, keeping your place in the grid</td></tr>
+    <tr><td><kbd>Space</kbd> or <kbd>Enter</kbd></td><td>Play the selected pad</td></tr>
+    <tr><td><kbd>Ctrl</kbd> + pad number, then release <kbd>Ctrl</kbd></td><td>Jump to that pad</td></tr>
+    <tr><td><kbd>L</kbd></td><td>Load samples (several files: one per pad, round-robin or velocity layers)</td></tr>
+    <tr><td><kbd>N</kbd> / <kbd>P</kbd></td><td>Next / previous sample in the folder</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>P</kbd></td><td>Try the next / previous sample on the pad; <kbd>Enter</kbd> keeps, <kbd>Escape</kbd> goes back</td></tr>
+    <tr><td><kbd>T</kbd> / <kbd>O</kbd></td><td>Edit Start / End by ear: arrows step 10 ms (<kbd>Ctrl</kbd> 1 ms, <kbd>Shift</kbd> 100 ms), <kbd>Space</kbd> replays, <kbd>Enter</kbd> keeps, <kbd>Escape</kbd> restores</td></tr>
+    <tr><td><kbd>K</kbd></td><td>Learn the pad's note from the next MIDI note (<kbd>Escape</kbd> cancels)</td></tr>
+    <tr><td><kbd>I</kbd></td><td>Describe the sample</td></tr>
+    <tr><td><kbd>B</kbd></td><td>Bounce the pad to the next empty pad</td></tr>
+    <tr><td><kbd>F2</kbd></td><td>Rename the pad</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Save a kit / open a kit</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Load audio files copied in Explorer onto the pad</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>Toggle REAPER's record</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Grab the selected REAPER item onto the pad</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
+    <tr><td><kbd>F1</kbd></td><td>Speak keyboard help</td></tr>
+    <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Move between heading, grid, buttons and status</td></tr>
+  </tbody>
+</table>
+<table>
+  <caption>Computer keys that play pads in the current bank while held, laid out like the grid. With Shift they speak the pad instead.</caption>
+  <thead><tr><th scope="col">Row</th><th scope="col">Keys</th><th scope="col">Bank A</th><th scope="col">Bank B</th></tr></thead>
+  <tbody>
+    <tr><td>Top</td><td><kbd>1 2 3 4</kbd></td><td>13 to 16</td><td>29 to 32</td></tr>
+    <tr><td>Third</td><td><kbd>Q W E R</kbd></td><td>9 to 12</td><td>25 to 28</td></tr>
+    <tr><td>Second</td><td><kbd>A S D F</kbd></td><td>5 to 8</td><td>21 to 24</td></tr>
+    <tr><td>Bottom</td><td><kbd>Z X C V</kbd></td><td>1 to 4</td><td>17 to 20</td></tr>
+  </tbody>
+</table>
+
+<h2 id="trouble">24. Troubleshooting</h2>
+<dl>
+  <dt>Space or letters control REAPER instead of ASampler.</dt>
+  <dd>Turn on "Send all keyboard input to plug-in" in the FX window's context menu.</dd>
+  <dt>I hear no spoken messages.</dt>
+  <dd>The status line at the bottom of the editor always has the last message. Check that your screen reader version supports UI Automation notifications (<a href="#screenreader">section 5</a>).</dd>
+  <dt>A pad is silent.</dt>
+  <dd>Select it and press <kbd>I</kbd>. Possible causes:
+    <ul>
+      <li>It is muted, or another pad is soloed.</li>
+      <li>Its sample is missing; use Relink.</li>
+      <li>Its Start is at or after its End.</li>
+      <li>Its Note doesn't match what you are playing.</li>
+      <li>Its output is routed to a pad track whose send was removed.</li>
+    </ul>
+  </dd>
+  <dt>A pad's sound is on its own track and I want it back on the main output.</dt>
+  <dd>Remove that pad's send from the ASampler track, or set the track back to 2 channels.</dd>
+  <dt>A stretched pad sounds unchanged.</dt>
+  <dd>The render may still be running; press Render stretch. Also check that Tempo Sync is on, Stretch Mode is Stretch, and Original BPM differs from the project tempo.</dd>
+  <dt>Formant Correct says the job is too large.</dt>
+  <dd>Correction prepares one version per semitone of range. Narrow the pad's Low Note to High Note range, use Key Zones, or use a shorter sample.</dd>
+  <dt>The Mac says the plugin is damaged, or the DAW doesn't list it.</dt>
+  <dd>Run the <code>xattr</code> command in <a href="#install">section 2</a>, then rescan plug-ins in the DAW.</dd>
+  <dt>Grab REAPER item or Ctrl+R says it works only in REAPER.</dt>
+  <dd>ASampler talks to REAPER through its VST3 interface. Use the VST3 version, inside REAPER.</dd>
+  <dt>Playing pads from the computer keys records nothing.</dt>
+  <dd>The notes leave on ASampler's MIDI output. The recording track needs a MIDI send from the ASampler track, and must be armed.</dd>
+  <dt>The routing script says ASampler has only 2 output channels.</dt>
+  <dd>Use the VST3 version of ASampler. VST3 provides the per-pad outputs in REAPER.</dd>
+</dl>
+
+<h2 id="specs">25. Technical details</h2>
+<ul>
+  <li><strong>Formats:</strong> VST3 for Windows 10 or later, 64-bit. VST3 and Audio Unit for macOS 11 or later, Apple Silicon and Intel (not yet tried on a real Mac).</li>
+  <li><strong>Pads:</strong> 32 in two banks of 16, with 8 layers each and 256 voices in total.</li>
+  <li><strong>MIDI output:</strong> notes played on the computer keys.</li>
+  <li><strong>Outputs:</strong> main stereo plus 32 stereo pad outputs (66 channels).</li>
+  <li><strong>Pitching:</strong> pads pitched more than about 2 semitones above the sample's own pitch are read through a band-limited (windowed-sinc) filter that follows the pitch, so high frequencies are filtered out instead of folding back down as harsh aliasing. At or below the original pitch, playback uses cubic interpolation, which is cheaper and has nothing to fold.</li>
+  <li><strong>CPU:</strong> 256 voices at the original pitch use about 32% of one core at 44.1 kHz (about 0.13% per voice). A voice pitched an octave up costs about 0.35%. Stretch and formant processing happens in the background and costs nothing during playback.</li>
+  <li><strong>Sample rates:</strong> any. Samples are converted on the fly, and the stretch engine adapts its analysis to the sample's rate.</li>
+  <li><strong>Saved state:</strong> every parameter, sample locations (kept even when missing), pad names and MIDI learn bindings, in the project or a <code>.asamplerkit</code> file.</li>
+  <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 350 automated tests.</li>
+</ul>
+<p class="muted">ASampler 1.0.0. See CHANGELOG.md for the version history.</p>
+</main>
+</body>
+</html>

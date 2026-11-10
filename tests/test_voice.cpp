@@ -398,13 +398,14 @@ TEST_CASE ("Voice uses 4-point cubic Hermite interpolation", "[voice][interp]")
     // gives exactly 0.5; Catmull-Rom cubic Hermite gives 0.5625. The latter
     // is the only one that can produce > 0.5 here.
     //
-    // pitchRatio comes from sourceRate / hostRate = 66150 / 44100 = 1.5, so
-    // host sample i lands at source position i * 1.5.
+    // pitchRatio comes from sourceRate / hostRate = 22050 / 44100 = 0.5, so
+    // host sample i lands at source position i * 0.5. (Pitched-up voices use
+    // the band-limited reader instead; see the [interpolation] tests.)
     juce::AudioBuffer<float> buf (1, 10);
     buf.clear();
     buf.setSample (0, 2, 1.0f);  // pattern: 0, 0, 1, 0, 0, ...
 
-    auto sample = std::make_shared<const Sample> (std::move (buf), 66150.0);
+    auto sample = std::make_shared<const Sample> (std::move (buf), 22050.0);
 
     VoiceConfig cfg = fastEnvelope();
     cfg.pan = -1.0f;             // route to channel 0 only
@@ -420,13 +421,13 @@ TEST_CASE ("Voice uses 4-point cubic Hermite interpolation", "[voice][interp]")
     // i=0: readPosition 0.0, frac 0 -> y1 = 0.
     REQUIRE (out.getSample (0, 0) == Catch::Approx (0.0f).margin (1e-5));
 
-    // i=1: readPosition 1.5, idx=1, frac=0.5. Analytic Catmull-Rom output
+    // i=3: readPosition 1.5, idx=1, frac=0.5. Analytic Catmull-Rom output
     // for (y0=0, y1=0, y2=1, y3=0) at t=0.5 is 0.5625.
-    REQUIRE (out.getSample (0, 1) == Catch::Approx (0.5625f).margin (0.001f));
+    REQUIRE (out.getSample (0, 3) == Catch::Approx (0.5625f).margin (0.001f));
 
     // Strict cubic-vs-linear check: linear interp could never reach > 0.5
     // here, because the bounding samples are 0 and 1.
-    REQUIRE (out.getSample (0, 1) > 0.55f);
+    REQUIRE (out.getSample (0, 3) > 0.55f);
 }
 
 TEST_CASE ("Voice forward loop replays the sample window", "[voice][loop]")
@@ -567,4 +568,140 @@ TEST_CASE ("Voice filter state resets on retrigger", "[voice][filter][lifetime]"
     voice.renderAdding (out, 0, 16);
 
     REQUIRE (out.getSample (0, 0) == Catch::Approx (1.0f).margin (0.001f));
+}
+
+// ---- Band-limited pitched-up playback ---------------------------------------
+
+namespace
+{
+    // RMS of a voice playing `src` from `triggerNote` (root 60), measured
+    // after the attack.
+    float playedRms (std::shared_ptr<const Sample> src, int triggerNote)
+    {
+        Voice v;
+        v.prepare (44100.0);
+        auto cfg = fastEnvelope();
+        v.start (std::move (src), triggerNote, 60, cfg);
+
+        juce::AudioBuffer<float> out (2, 8192);
+        out.clear();
+        v.renderAdding (out, 0, out.getNumSamples());
+        return rms (out, 0, 1024, 4096);
+    }
+}
+
+TEST_CASE ("Pitching up does not fold high content back down as aliasing",
+           "[voice][interpolation]")
+{
+    // 12 kHz an octave up is 24 kHz, above the 22.05 kHz Nyquist. It must be
+    // filtered out, not reflected down to 20.1 kHz as cubic interpolation does.
+    const auto hi = makeSine (44100, 12000.0);
+    const float atRoot = playedRms (hi, 60);
+    const float octUp  = playedRms (hi, 72);
+    REQUIRE (atRoot > 0.1f);
+    REQUIRE (octUp < atRoot * 0.01f);   // at least 40 dB down
+}
+
+TEST_CASE ("Pitching up keeps content that still fits below Nyquist",
+           "[voice][interpolation]")
+{
+    // 2 kHz an octave up is 4 kHz: well inside the passband, so its level
+    // must not change.
+    const auto lo = makeSine (44100, 2000.0);
+    const float atRoot = playedRms (lo, 60);
+    const float octUp  = playedRms (lo, 72);
+    REQUIRE (octUp == Catch::Approx (atRoot).epsilon (0.03));
+}
+
+TEST_CASE ("A sample recorded at a higher rate plays without aliasing",
+           "[voice][interpolation]")
+{
+    // A 96 kHz file holding 30 kHz content, played in a 44.1 kHz session:
+    // that content cannot be represented and must vanish, not alias.
+    const auto ultrasonic = makeSine (96000, 30000.0, 96000.0);
+    const auto audible    = makeSine (96000,  3000.0, 96000.0);
+    REQUIRE (playedRms (ultrasonic, 60) < playedRms (audible, 60) * 0.01f);
+}
+
+// ---- Second LFO, LFO sync, mod wheel -----------------------------------------
+
+namespace
+{
+    float steadyRms (VoiceConfig cfg, float wheel = -1.0f)
+    {
+        Voice v;
+        v.prepare (44100.0);
+        v.start (makeDC (44100), 60, 60, cfg);
+        if (wheel >= 0.0f)
+            v.setModWheel (wheel);
+
+        juce::AudioBuffer<float> out (2, 22050);
+        out.clear();
+        v.renderAdding (out, 0, out.getNumSamples());
+        return rms (out, 0, 4410, 17640);   // after the 20 ms wheel ramp
+    }
+}
+
+TEST_CASE ("The second LFO modulates on its own", "[voice][lfo]")
+{
+    auto cfg = fastEnvelope();
+    const float plain = steadyRms (cfg);
+
+    cfg.lfo2Dest   = LfoDest::Volume;
+    cfg.lfo2Shape  = LfoShape::Square;
+    cfg.lfo2RateHz = 10.0f;
+    cfg.lfo2Depth  = 1.0f;
+    // Square at full depth: silent half the time, double the other half.
+    REQUIRE (steadyRms (cfg) == Catch::Approx (plain * std::sqrt (2.0f)).epsilon (0.05));
+}
+
+TEST_CASE ("Both LFOs on one destination add up", "[voice][lfo]")
+{
+    auto cfg = fastEnvelope();
+    cfg.lfoDest    = LfoDest::Volume;  cfg.lfoShape  = LfoShape::Square;
+    cfg.lfoRateHz  = 10.0f;            cfg.lfoDepth  = 0.5f;
+    cfg.lfo2Dest   = LfoDest::Volume;  cfg.lfo2Shape = LfoShape::Square;
+    cfg.lfo2RateHz = 10.0f;            cfg.lfo2Depth = 0.5f;
+    const float both = steadyRms (cfg);
+
+    auto one = fastEnvelope();
+    one.lfoDest = LfoDest::Volume; one.lfoShape = LfoShape::Square;
+    one.lfoRateHz = 10.0f;         one.lfoDepth = 1.0f;
+    REQUIRE (both == Catch::Approx (steadyRms (one)).epsilon (0.02));
+}
+
+TEST_CASE ("The mod wheel can turn a pad down", "[voice][modwheel]")
+{
+    auto cfg = fastEnvelope();
+    cfg.modWheelDest   = ModDest::Volume;
+    cfg.modWheelAmount = -1.0f;
+
+    const float wheelDown = steadyRms (cfg, 0.0f);
+    const float wheelUp   = steadyRms (cfg, 1.0f);
+    REQUIRE (wheelDown > 0.5f);
+    REQUIRE (wheelUp < 0.01f);
+}
+
+TEST_CASE ("The mod wheel brings in an LFO from zero depth", "[voice][modwheel][lfo]")
+{
+    // The classic vibrato-on-the-wheel setup: LFO 1 routed but at 0% depth,
+    // the wheel adding to that depth.
+    auto cfg = fastEnvelope();
+    cfg.lfoDest   = LfoDest::Volume;  cfg.lfoShape = LfoShape::Square;
+    cfg.lfoRateHz = 10.0f;            cfg.lfoDepth = 0.0f;
+    cfg.modWheelDest   = ModDest::Lfo1Depth;
+    cfg.modWheelAmount = 1.0f;
+
+    const float still = steadyRms (cfg, 0.0f);
+    const float moved = steadyRms (cfg, 1.0f);
+    REQUIRE (moved == Catch::Approx (still * std::sqrt (2.0f)).epsilon (0.05));
+}
+
+TEST_CASE ("LFO sync locks the rate to the host tempo", "[lfo]")
+{
+    REQUIRE (lfoRateFor (3.0f, LfoSync::Off, 120.0) == Catch::Approx (3.0f));
+    REQUIRE (lfoRateFor (3.0f, LfoSync::Quarter, 120.0) == Catch::Approx (2.0f));
+    REQUIRE (lfoRateFor (3.0f, LfoSync::OneBar, 120.0) == Catch::Approx (0.5f));
+    REQUIRE (lfoRateFor (3.0f, LfoSync::EighthTriplet, 90.0) == Catch::Approx (4.5f));
+    REQUIRE (lfoRateFor (3.0f, LfoSync::QuarterDotted, 120.0) == Catch::Approx (2.0f / 1.5f));
 }

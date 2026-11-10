@@ -4,6 +4,7 @@
 #include "Saturation.h"
 
 #include <cmath>
+#include <vector>
 
 namespace asampler
 {
@@ -45,6 +46,133 @@ namespace asampler
             }
             return idx;
         }
+
+        // ---- Band-limited reading for pitched-up playback -------------------
+        //
+        // Reading a sample faster than its own rate (pitching up, or playing a
+        // 48 kHz file in a 44.1 kHz session) folds everything above the new
+        // Nyquist back down as aliasing: harsh, inharmonic grit on hats and
+        // vocals. Cubic interpolation can't prevent that, because it doesn't
+        // filter. So pitched-up voices read through a windowed-sinc low-pass
+        // whose cutoff follows the playback ratio, the way commercial
+        // samplers do.
+        //
+        // Below kSincMinSpeed (about +2 semitones) the voice keeps the cheap
+        // cubic path: whatever folds there lands above ~19 kHz, and that
+        // range covers the very common case of a 48 kHz file in a 44.1 kHz
+        // session, so most drum hits never pay for the long kernel.
+        constexpr int   kSincZeroCrossings = 16;     // kernel half-width, in zero crossings
+        constexpr double kSincBeta         = 6.5;    // Kaiser shape: ~68 dB stopband
+        constexpr float kSincCutoff        = 0.88f;  // centre of the transition, so the stopband starts at the new Nyquist
+        constexpr float kSincMinSpeed      = 1.12f;  // ~ +2 semitones
+        constexpr float kMaxSincRatio      = 4.0f;   // beyond +2 octaves the kernel stops widening
+
+        double besselI0 (double x) noexcept
+        {
+            // Power series; converges quickly for the arguments a Kaiser
+            // window needs. (std::cyl_bessel_i isn't available on libc++.)
+            double sum = 1.0, term = 1.0;
+            const double q = x * x * 0.25;
+            for (int k = 1; k < 64; ++k)
+            {
+                term *= q / static_cast<double> (k * k);
+                sum  += term;
+                if (term < sum * 1.0e-12)
+                    break;
+            }
+            return sum;
+        }
+
+        // Kaiser-windowed sinc evaluated at x zero crossings from its centre.
+        double windowedSinc (double x) noexcept
+        {
+            x = std::abs (x);
+            if (x >= kSincZeroCrossings)
+                return 0.0;
+            const double r    = x / kSincZeroCrossings;
+            const double sinc = (x < 1.0e-9) ? 1.0
+                                             : std::sin (juce::MathConstants<double>::pi * x)
+                                                   / (juce::MathConstants<double>::pi * x);
+            static const double i0Beta = besselI0 (kSincBeta);
+            return sinc * besselI0 (kSincBeta * std::sqrt (juce::jmax (0.0, 1.0 - r * r))) / i0Beta;
+        }
+
+        // Precomputed polyphase filters, one bank per playback speed step.
+        //
+        // Evaluating the kernel per tap per sample costs more than a whole
+        // voice should. Instead each bank holds the kernel for one cutoff,
+        // sampled at kSincPhases fractional positions; a read picks its bank
+        // by speed, its two nearest phases by the fractional read position,
+        // and blends them — a multiply-add per tap. Banks are spaced 2% apart
+        // in speed, so the cutoff is never more than 1% off where it should
+        // be. Every phase is normalised to unity gain so DC passes exactly.
+        constexpr int    kSincPhases    = 128;
+        constexpr double kSincBankStep  = 1.02;
+
+        struct SincBank
+        {
+            int half = 0;                 // taps either side of the read position
+            int taps = 0;                 // 2 * half
+            std::vector<float> coeffs;    // (kSincPhases + 1) rows of `taps`
+        };
+
+        struct SincBanks
+        {
+            std::vector<SincBank> banks;
+            double logStep = std::log (kSincBankStep);
+
+            const SincBank& forSpeed (float speed) const noexcept
+            {
+                const double r = juce::jlimit (static_cast<double> (kSincMinSpeed),
+                                               static_cast<double> (kMaxSincRatio),
+                                               static_cast<double> (speed));
+                const int i = static_cast<int> (std::log (r / kSincMinSpeed) / logStep + 0.5);
+                return banks[(std::size_t) juce::jlimit (0, (int) banks.size() - 1, i)];
+            }
+        };
+
+        const SincBanks& sincBanks()
+        {
+            static const SincBanks built = []
+            {
+                SincBanks b;
+                const int count = static_cast<int> (std::ceil (std::log (kMaxSincRatio / kSincMinSpeed)
+                                                               / b.logStep)) + 1;
+                b.banks.resize ((std::size_t) count);
+
+                for (int i = 0; i < count; ++i)
+                {
+                    const double speed  = kSincMinSpeed * std::pow (kSincBankStep, i);
+                    const double cutoff = kSincCutoff / juce::jmin (speed, static_cast<double> (kMaxSincRatio));
+
+                    auto& bank = b.banks[(std::size_t) i];
+                    bank.half = static_cast<int> (std::ceil (kSincZeroCrossings / cutoff));
+                    bank.taps = 2 * bank.half;
+                    bank.coeffs.assign ((std::size_t) ((kSincPhases + 1) * bank.taps), 0.0f);
+
+                    for (int ph = 0; ph <= kSincPhases; ++ph)
+                    {
+                        // Tap k sits at source index centre - half + 1 + k, so
+                        // its distance from the read position is
+                        // frac + half - 1 - k.
+                        const double frac = static_cast<double> (ph) / kSincPhases;
+                        float* row = bank.coeffs.data() + (std::size_t) (ph * bank.taps);
+
+                        double sum = 0.0;
+                        for (int k = 0; k < bank.taps; ++k)
+                        {
+                            const double w = windowedSinc ((frac + bank.half - 1 - k) * cutoff);
+                            row[k] = static_cast<float> (w);
+                            sum += w;
+                        }
+                        for (int k = 0; k < bank.taps; ++k)
+                            row[k] = static_cast<float> (row[k] / sum);
+                    }
+                }
+                return b;
+            }();
+            return built;
+        }
     }
 
     void Voice::prepare (double sr)
@@ -57,6 +185,9 @@ namespace asampler
         smoothedGain  .reset (sr, kSmoothingSeconds);
         smoothedPan   .reset (sr, kSmoothingSeconds);
         smoothedCutoff.reset (sr, kSmoothingSeconds);
+        smoothedModWheel.reset (sr, kSmoothingSeconds);
+
+        sincBanks();   // build the shared filters here, never on the audio thread
 
         juce::dsp::ProcessSpec spec { sr, /*maxBlockSize*/ 1, /*numChannels*/ 2 };
         filter.prepare (spec);
@@ -209,8 +340,6 @@ namespace asampler
                                                                 * monoBelowHz / hostRate))
                           : 0.0f;
 
-        aftertouchGainMultiplier   = cfg.aftertouchVolumeMultiplier;
-        aftertouchCutoffMultiplier = cfg.aftertouchCutoffMultiplier;
         padGate                    = cfg.padGate;
 
         // Configure per-voice filter. Reset clears state so retrigger does not
@@ -263,7 +392,17 @@ namespace asampler
         lfoDepth    = juce::jlimit (0.0f, 1.0f, cfg.lfoDepth);
         lfoPhase    = 0.0;
         lfoPhaseInc = (hostRate > 0.0) ? (static_cast<double> (cfg.lfoRateHz) / hostRate) : 0.0;
-        lfoActive   = (lfoDest != LfoDest::Off) && (lfoDepth > 0.0f) && (lfoPhaseInc > 0.0);
+
+        lfo2Shape    = cfg.lfo2Shape;
+        lfo2Dest     = cfg.lfo2Dest;
+        lfo2Depth    = juce::jlimit (0.0f, 1.0f, cfg.lfo2Depth);
+        lfo2Phase    = 0.0;
+        lfo2PhaseInc = (hostRate > 0.0) ? (static_cast<double> (cfg.lfo2RateHz) / hostRate) : 0.0;
+
+        modWheelDest   = cfg.modWheelDest;
+        modWheelAmount = juce::jlimit (-1.0f, 1.0f, cfg.modWheelAmount);
+        smoothedModWheel.setCurrentAndTargetValue (juce::jlimit (0.0f, 1.0f, cfg.modWheel));
+        updateModActive();
 
         // Saturation / bit-crush character chain.
         satMode          = cfg.satMode;
@@ -309,15 +448,6 @@ namespace asampler
         updatePitchRatio();
     }
 
-    void Voice::setAftertouchModulation (float volumeMultiplier,
-                                         float cutoffMultiplier) noexcept
-    {
-        aftertouchGainMultiplier   = volumeMultiplier;
-        aftertouchCutoffMultiplier = cutoffMultiplier;
-        if (filterMode != FilterMode::Off)
-            updateFilterCutoff();
-    }
-
     void Voice::setLiveParams (const VoiceLiveParams& live) noexcept
     {
         if (! active)
@@ -347,7 +477,11 @@ namespace asampler
 
         lfoDepth    = juce::jlimit (0.0f, 1.0f, live.lfoDepth);
         lfoPhaseInc = (hostRate > 0.0) ? (static_cast<double> (live.lfoRateHz) / hostRate) : 0.0;
-        lfoActive   = (lfoDest != LfoDest::Off) && (lfoDepth > 0.0f) && (lfoPhaseInc > 0.0);
+
+        lfo2Depth      = juce::jlimit (0.0f, 1.0f, live.lfo2Depth);
+        lfo2PhaseInc   = (hostRate > 0.0) ? (static_cast<double> (live.lfo2RateHz) / hostRate) : 0.0;
+        modWheelAmount = juce::jlimit (-1.0f, 1.0f, live.modWheelAmount);
+        updateModActive();
 
         // Filter-envelope depth is live; its ADSR shape stays trigger-time,
         // like the amp envelope.
@@ -364,6 +498,24 @@ namespace asampler
                           : 0.0f;
     }
 
+    void Voice::setModWheel (float value) noexcept
+    {
+        smoothedModWheel.setTargetValue (juce::jlimit (0.0f, 1.0f, value));
+    }
+
+    void Voice::updateModActive() noexcept
+    {
+        // The wheel can bring an LFO in from zero depth, so an LFO counts as
+        // live whenever the wheel is routed to its depth, not only when its
+        // own depth is above zero.
+        const bool wheelLive = modWheelDest != ModDest::Off && std::abs (modWheelAmount) > 0.0f;
+        const bool lfo1Live  = lfoDest  != LfoDest::Off && lfoPhaseInc  > 0.0
+                            && (lfoDepth  > 0.0f || (wheelLive && modWheelDest == ModDest::Lfo1Depth));
+        const bool lfo2Live  = lfo2Dest != LfoDest::Off && lfo2PhaseInc > 0.0
+                            && (lfo2Depth > 0.0f || (wheelLive && modWheelDest == ModDest::Lfo2Depth));
+        modActive = lfo1Live || lfo2Live || wheelLive;
+    }
+
     void Voice::updatePitchRatio() noexcept
     {
         pitchRatio = basePitchRatio * pitchBendScale * glideScale * pitchEnvScale * direction;
@@ -372,7 +524,7 @@ namespace asampler
     void Voice::updateFilterCutoff() noexcept
     {
         const float nyquist = static_cast<float> (hostRate * 0.5);
-        const float target  = baseCutoffHz * aftertouchCutoffMultiplier;
+        const float target  = baseCutoffHz;
         lastCutoffSet = target;   // keep the render loop's change detector in sync
         filter.setCutoffFrequency (juce::jlimit (20.0f, nyquist - 1.0f, target));
     }
@@ -405,12 +557,80 @@ namespace asampler
             return ((a * frac + b) * frac + c) * frac + d;
         };
 
+        const auto& banks = sincBanks();
+
+        // Band-limited read for a voice moving faster than kSincMinSpeed
+        // source samples per output sample. The bank's cutoff follows the
+        // speed, which is what keeps everything below the new Nyquist. Taps
+        // outside the playback window repeat the edge sample, as the cubic
+        // path does.
+        auto readBandLimited = [&] (double pos, float speed, float& oL, float& oR)
+        {
+            const auto& bank   = banks.forSpeed (speed);
+            const int   centre = static_cast<int> (std::floor (pos));
+            const int   first  = centre - bank.half + 1;
+
+            const float pf = static_cast<float> (pos - centre) * static_cast<float> (kSincPhases);
+            const int   p0 = juce::jlimit (0, kSincPhases - 1, static_cast<int> (pf));
+            const float t  = pf - static_cast<float> (p0);
+            const float* a = bank.coeffs.data() + (std::size_t) (p0 * bank.taps);
+            const float* b = a + bank.taps;
+
+            float accL = 0.0f, accR = 0.0f;
+            if (first >= startIdx && first + bank.taps <= endIdx)
+            {
+                // Four independent partial sums per channel so the loop
+                // pipelines instead of waiting on one accumulator.
+                const float* l = srcL + first;
+                const float* r = srcR + first;
+                float l0 = 0.0f, l1 = 0.0f, l2 = 0.0f, l3 = 0.0f;
+                float r0 = 0.0f, r1 = 0.0f, r2 = 0.0f, r3 = 0.0f;
+                int k = 0;
+                for (; k + 4 <= bank.taps; k += 4)
+                {
+                    const float w0 = a[k]     + t * (b[k]     - a[k]);
+                    const float w1 = a[k + 1] + t * (b[k + 1] - a[k + 1]);
+                    const float w2 = a[k + 2] + t * (b[k + 2] - a[k + 2]);
+                    const float w3 = a[k + 3] + t * (b[k + 3] - a[k + 3]);
+                    l0 += w0 * l[k]; l1 += w1 * l[k + 1]; l2 += w2 * l[k + 2]; l3 += w3 * l[k + 3];
+                    r0 += w0 * r[k]; r1 += w1 * r[k + 1]; r2 += w2 * r[k + 2]; r3 += w3 * r[k + 3];
+                }
+                for (; k < bank.taps; ++k)
+                {
+                    const float w = a[k] + t * (b[k] - a[k]);
+                    l0 += w * l[k];
+                    r0 += w * r[k];
+                }
+                accL = (l0 + l1) + (l2 + l3);
+                accR = (r0 + r1) + (r2 + r3);
+            }
+            else
+            {
+                for (int k = 0; k < bank.taps; ++k)
+                {
+                    const float w  = a[k] + t * (b[k] - a[k]);
+                    const int   at = juce::jlimit (startIdx, endIdx - 1, first + k);
+                    accL += w * srcL[at];
+                    accR += w * srcR[at];
+                }
+            }
+            oL = accL;
+            oR = accR;
+        };
+
         // Interpolated read at an arbitrary position. Neighbour indices are
         // clamped against the playback window so the interpolator never reads
         // outside [startIdx, endIdx). Used for the main read and for the
-        // loop-crossfade partner read.
-        auto readAt = [&] (double pos, float& oL, float& oR)
+        // loop-crossfade partner read. `speed` is source samples per output
+        // sample.
+        auto readAt = [&] (double pos, float speed, float& oL, float& oR)
         {
+            if (speed > kSincMinSpeed)
+            {
+                readBandLimited (pos, speed, oL, oR);
+                return;
+            }
+
             int i0 = juce::jlimit (startIdx, endIdx - 1, static_cast<int> (std::floor (pos)));
             const float fr  = juce::jlimit (0.0f, 1.0f, static_cast<float> (pos - i0));
             const int   im1 = (i0 > startIdx)     ? i0 - 1 : i0;
@@ -473,15 +693,59 @@ namespace asampler
                 break;
             }
 
-            // One LFO evaluation per sample, shared across destinations.
-            // lfoMod is in [-depth, +depth].
-            float lfoMod = 0.0f;
-            if (lfoActive)
+            // Modulation: both LFOs and the mod wheel, summed per destination.
+            // Each source is in [-1, 1] after its depth or amount; the
+            // destination sets the full-scale range (pitch ±1 octave, cutoff
+            // ±4 octaves, volume to silence, pan full width).
+            float modPitchOct = 0.0f, modCutoffOct = 0.0f, modVolume = 0.0f, modPan = 0.0f;
+            if (modActive)
             {
-                lfoMod    = lfoValue (lfoShape, lfoPhase) * lfoDepth;
-                lfoPhase += lfoPhaseInc;
-                if (lfoPhase >= 1.0) lfoPhase -= 1.0;
+                const float wheel = smoothedModWheel.getNextValue() * modWheelAmount;
+
+                auto route = [&] (int dest, float v) noexcept
+                {
+                    switch (dest)
+                    {
+                        case 1: modPitchOct  += v;        break;   // Pitch
+                        case 2: modCutoffOct += v * 4.0f; break;   // Cutoff
+                        case 3: modVolume    += v;        break;   // Volume
+                        case 4: modPan       += v;        break;   // Pan
+                        default: break;
+                    }
+                };
+
+                if (lfoDest != LfoDest::Off)
+                {
+                    const float depth = juce::jlimit (0.0f, 1.0f, lfoDepth
+                                          + (modWheelDest == ModDest::Lfo1Depth ? wheel : 0.0f));
+                    route (static_cast<int> (lfoDest), lfoValue (lfoShape, lfoPhase) * depth);
+                    lfoPhase += lfoPhaseInc;
+                    if (lfoPhase >= 1.0) lfoPhase -= 1.0;
+                }
+
+                if (lfo2Dest != LfoDest::Off)
+                {
+                    const float depth = juce::jlimit (0.0f, 1.0f, lfo2Depth
+                                          + (modWheelDest == ModDest::Lfo2Depth ? wheel : 0.0f));
+                    route (static_cast<int> (lfo2Dest), lfoValue (lfo2Shape, lfo2Phase) * depth);
+                    lfo2Phase += lfo2PhaseInc;
+                    if (lfo2Phase >= 1.0) lfo2Phase -= 1.0;
+                }
+
+                // ModDest's direct targets share LfoDest's numbering.
+                if (modWheelDest != ModDest::Off && modWheelDest != ModDest::Lfo1Depth
+                    && modWheelDest != ModDest::Lfo2Depth)
+                    route (static_cast<int> (modWheelDest), wheel);
             }
+
+            // This sample's read increment. pitchRatio already carries base
+            // pitch, bend, glide, pitch-env and direction; modulation scales
+            // it on top. Worked out before the read because the read's
+            // anti-aliasing depends on how fast it moves.
+            double inc = pitchRatio;
+            if (modPitchOct != 0.0f)
+                inc *= std::pow (2.0, static_cast<double> (modPitchOct));
+            const float speed = static_cast<float> (std::abs (inc));
 
             // Advance the parameter ramps. Gain and pan share a derived
             // equal-power computation, so only pay for the trig when one of
@@ -503,7 +767,7 @@ namespace asampler
             }
 
             float sL, sR;
-            readAt (readPosition, sL, sR);
+            readAt (readPosition, speed, sL, sR);
 
             // Forward-loop crossfade: as the read nears the loop end, blend in
             // the sample one loop-span earlier (the point it will wrap to) so
@@ -517,14 +781,14 @@ namespace asampler
                         static_cast<float> ((readPosition - xfadeStart)
                                             / static_cast<double> (loopXfadeSamples)));
                     float hL, hR;
-                    readAt (readPosition - static_cast<double> (loopEndIdx - loopStartIdx), hL, hR);
+                    readAt (readPosition - static_cast<double> (loopEndIdx - loopStartIdx), speed, hL, hR);
                     sL = sL * (1.0f - t) + hL * t;
                     sR = sR * (1.0f - t) + hR * t;
                 }
             }
 
             // Filter, with cutoff optionally swept by the LFO (±4 octaves at
-            // full depth), on top of the aftertouch multiplier.
+            // full depth).
             if (filterMode != FilterMode::Off)
             {
                 // Filter envelope contributes a multiplicative octave shift on
@@ -534,11 +798,11 @@ namespace asampler
                 if (filterEnvActive)
                     envMult = std::pow (2.0f, filterEnv.getNextSample() * filterEnvOctaves);
 
-                if (lfoActive && lfoDest == LfoDest::Cutoff)
+                if (modCutoffOct != 0.0f)
                 {
                     const float nyquist = static_cast<float> (hostRate * 0.5);
-                    const float swept   = baseCutoffHz * aftertouchCutoffMultiplier * envMult
-                                          * std::pow (2.0f, lfoMod * 4.0f);
+                    const float swept   = baseCutoffHz * envMult
+                                          * std::pow (2.0f, modCutoffOct);
                     filter.setCutoffFrequency (juce::jlimit (20.0f, nyquist - 1.0f, swept));
                 }
                 else
@@ -546,7 +810,7 @@ namespace asampler
                     // Live / smoothed cutoff. setCutoffFrequency recomputes
                     // coefficients, so only call it when the value moved —
                     // a static voice pays one float compare per sample.
-                    const float target = baseCutoffHz * aftertouchCutoffMultiplier * envMult;
+                    const float target = baseCutoffHz * envMult;
                     if (target != lastCutoffSet)
                     {
                         lastCutoffSet = target;
@@ -585,21 +849,21 @@ namespace asampler
                 }
             }
 
-            // Gains — volume (tremolo) or pan (auto-pan) optionally driven by
-            // the LFO. Only one of the two is recomputed per sample.
+            // Gains — modulated pan (auto-pan) and volume (tremolo), each
+            // recomputed only when something is routed to it.
             float gL = gainL, gR = gainR;
-            if (lfoActive && lfoDest == LfoDest::Volume)
+            if (modPan != 0.0f)
             {
-                const float vol = juce::jmax (0.0f, 1.0f + lfoMod);
-                gL *= vol;
-                gR *= vol;
-            }
-            else if (lfoActive && lfoDest == LfoDest::Pan)
-            {
-                const float p   = juce::jlimit (-1.0f, 1.0f, basePan + lfoMod);
+                const float p   = juce::jlimit (-1.0f, 1.0f, basePan + modPan);
                 const float ang = (p + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
                 gL = baseGainLin * std::cos (ang);
                 gR = baseGainLin * std::sin (ang);
+            }
+            if (modVolume != 0.0f)
+            {
+                const float vol = juce::jmax (0.0f, 1.0f + modVolume);
+                gL *= vol;
+                gR *= vol;
             }
 
             // Edge fades. Applied at the two physical window boundaries (by
@@ -621,11 +885,10 @@ namespace asampler
             }
 
             const float env    = envelope.getNextSample();
-            const float atGain = aftertouchGainMultiplier;
             const float gate   = padGate;
 
-            float outL = sL * env * gL * atGain * gate * fade;
-            float outR = sR * env * gR * atGain * gate * fade;
+            float outL = sL * env * gL * gate * fade;
+            float outR = sR * env * gR * gate * fade;
 
             // Stereo shaping, applied last so it sees the finished signal.
             if (stereoShaping)
@@ -657,12 +920,6 @@ namespace asampler
             output.addSample (0, startSample + i, outL);
             output.addSample (1, startSample + i, outR);
 
-            // Advance the read position. Pitch LFO scales the increment
-            // (±1 octave at full depth); pitchRatio already carries base pitch,
-            // bend, glide, pitch-env and direction.
-            double inc = pitchRatio;
-            if (lfoActive && lfoDest == LfoDest::Pitch)
-                inc *= std::pow (2.0, static_cast<double> (lfoMod));
             readPosition += inc;
 
             // Pitch-env and glide decays both feed pitchRatio; recompute once.

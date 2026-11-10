@@ -118,13 +118,11 @@ namespace asampler
                 slot.voice.setPitchBendSemitones (semitones);
     }
 
-    void VoicePool::setAftertouchModForPad (int padIndex,
-                                            float volumeMultiplier,
-                                            float cutoffMultiplier)
+    void VoicePool::setModWheel (float value)
     {
         for (auto& slot : slots)
-            if (slot.padIndex == padIndex)
-                slot.voice.setAftertouchModulation (volumeMultiplier, cutoffMultiplier);
+            if (slot.padIndex >= 0)
+                slot.voice.setModWheel (value);
     }
 
     void VoicePool::setPadGate (int padIndex, float gate)

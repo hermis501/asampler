@@ -30,10 +30,6 @@ namespace asampler
         float    loopStartNorm = 0.0f;    // 0..1 of source length
         float    loopEndNorm   = 1.0f;    // must be > loopStartNorm after clamp
         juce::ADSR::Parameters adsr { 0.005f, 0.100f, 1.0f, 0.100f };
-        // Channel-aftertouch modulation, applied multiplicatively on top of
-        // the base gain and filter cutoff. 1.0 = no modulation.
-        float aftertouchVolumeMultiplier = 1.0f;
-        float aftertouchCutoffMultiplier = 1.0f;
         // Mute/solo gate from the pad's per-pad bools, applied as an output
         // gain multiplier. 1.0 = pad sounds, 0.0 = pad silenced. Lives in
         // the config so newly triggered voices inherit the current gate, and
@@ -67,6 +63,19 @@ namespace asampler
         float    lfoRateHz = 1.0f;
         float    lfoDepth  = 0.0f;
 
+        // Second LFO, same ranges. Two give a slow sweep and a fast wobble at
+        // once, or vibrato on pitch while the first moves the filter.
+        LfoShape lfo2Shape  = LfoShape::Sine;
+        LfoDest  lfo2Dest   = LfoDest::Off;
+        float    lfo2RateHz = 1.0f;
+        float    lfo2Depth  = 0.0f;
+
+        // Mod wheel routing. `modWheel` is the current wheel position 0..1;
+        // `modWheelAmount` (-1..1) scales it onto `modWheelDest`.
+        ModDest modWheelDest   = ModDest::Off;
+        float   modWheelAmount = 0.0f;
+        float   modWheel       = 0.0f;
+
         // Saturation / bit-crush "character" chain, applied post-filter.
         SaturationMode satMode        = SaturationMode::Tube;
         float          satAmount      = 0.0f;   // 0 = bypass
@@ -86,7 +95,7 @@ namespace asampler
         // Filter envelope. A dedicated ADSR on the cutoff, with `filterEnvOctaves`
         // setting how far (and in which direction) a full envelope pushes it.
         // 0 octaves is a bypass. This is the per-hit filter sweep that LFO,
-        // velocity and aftertouch modulation could not express.
+        // and velocity modulation could not express.
         float filterEnvOctaves = 0.0f;
         juce::ADSR::Parameters filterEnvAdsr { 0.001f, 0.200f, 0.0f, 0.100f };
 
@@ -126,6 +135,9 @@ namespace asampler
         float stereoWidth     = 1.0f;
         float monoBelowHz     = 0.0f;
         float filterEnvOctaves = 0.0f;
+        float lfo2RateHz      = 1.0f;
+        float lfo2Depth       = 0.0f;
+        float modWheelAmount  = 0.0f;
     };
 
     // One playing voice. Holds a shared_ptr to its source Sample so that the
@@ -158,16 +170,15 @@ namespace asampler
         // ping-pong's mid-flight direction flips are preserved.
         void setPitchBendSemitones (float semitones) noexcept;
 
-        // Live channel-aftertouch modulation. Multiplies the voice's base
-        // gain and (if filter is on) base filter cutoff. 1.0 = bypass.
-        void setAftertouchModulation (float volumeMultiplier,
-                                      float cutoffMultiplier) noexcept;
-
         // Live mute/solo gate update from the plugin layer. 1.0 = sounds,
         // 0.0 = silenced. Cheap atomic-ish flip; the voice keeps advancing
         // its sample position so unmuting resumes where the user would
         // expect (DAW-style track mute).
         void setPadGate (float gate) noexcept { padGate = gate; }
+
+        // Live mod wheel position (0..1), ramped so a wheel moved in coarse
+        // MIDI steps doesn't zipper.
+        void setModWheel (float value) noexcept;
 
         // Live parameter push from the plugin layer, called once per block for
         // every sounding voice. Gain / pan / cutoff ramp to their new values
@@ -181,6 +192,7 @@ namespace asampler
     private:
         void updatePitchRatio() noexcept;
         void updateFilterCutoff() noexcept;
+        void updateModActive() noexcept;
 
         std::shared_ptr<const Sample> source;
         double hostRate     = 44100.0;
@@ -206,8 +218,6 @@ namespace asampler
         float  gainR = 1.0f;
         float  baseGainLin = 1.0f;     // current (post-smoothing) gain, for per-sample LFO volume/pan recompute
         float  basePan     = 0.0f;     // current (post-smoothing) pan,  for per-sample LFO pan recompute
-        float  aftertouchGainMultiplier   = 1.0f;
-        float  aftertouchCutoffMultiplier = 1.0f;
         float  baseCutoffHz               = 20000.0f;  // current (post-smoothing) cutoff
         float  padGate                    = 1.0f;
 
@@ -256,14 +266,26 @@ namespace asampler
         int        loopStartIdx = 0;     // inclusive
         int        loopEndIdx   = 0;     // exclusive
 
-        // Per-pad LFO state. `lfoActive` gates the whole modulation path so the
-        // common (no-LFO) case pays only one bool test per sample.
-        bool     lfoActive  = false;
+        // Per-pad LFO state.
         LfoShape lfoShape    = LfoShape::Sine;
         LfoDest  lfoDest      = LfoDest::Off;
         double   lfoPhase     = 0.0;   // [0, 1)
         double   lfoPhaseInc  = 0.0;   // per-sample phase advance
         float    lfoDepth     = 0.0f;
+
+        LfoShape lfo2Shape    = LfoShape::Sine;
+        LfoDest  lfo2Dest     = LfoDest::Off;
+        double   lfo2Phase    = 0.0;
+        double   lfo2PhaseInc = 0.0;
+        float    lfo2Depth    = 0.0f;
+
+        ModDest  modWheelDest   = ModDest::Off;
+        float    modWheelAmount = 0.0f;
+        juce::SmoothedValue<float> smoothedModWheel;
+
+        // Any LFO or wheel routing live on this voice. Gates the whole
+        // modulation block, so an unmodulated voice pays one bool test.
+        bool     modActive = false;
 
         // Saturation / bit-crush. `characterActive` gates the whole chain.
         bool           characterActive = false;

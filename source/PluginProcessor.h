@@ -12,6 +12,7 @@
 #include "engine/VelocityCurve.h"
 #include "engine/PhaseVocoder.h"
 #include "engine/VoicePool.h"
+#include "ReaperIntegration.h"
 
 #include <array>
 #include <atomic>
@@ -19,9 +20,17 @@
 
 namespace asampler
 {
-    inline constexpr int kNumPads   = 16;
-    inline constexpr int kNumVoices = 32;
-    inline constexpr int kNumLayers = 4;   // velocity layers per pad
+    // Two MPC-style banks of 16: bank A is pads 1-16, bank B pads 17-32.
+    inline constexpr int kNumPads   = 32;
+    inline constexpr int kPadsPerBank = 16;
+    // Every pad at the per-pad cap of 8, so no pad at its cap can starve
+    // another: rolls, long releases and stacked layers all fit at once. Idle
+    // voices cost nothing; the pool only matters when they all sound.
+    inline constexpr int kNumVoices = kNumPads * 8;
+    // Sample layers per pad: velocity layers, round-robin variations, release
+    // samples or key zones. Eight is enough for a real multisampled instrument
+    // across a few octaves, or four velocities with a release sample each.
+    inline constexpr int kNumLayers = 8;
 
     // Widest interval either side of a layer's root for which a formant-
     // corrected variant will be pre-rendered. Two octaves covers any realistic
@@ -40,9 +49,17 @@ namespace asampler
         int    minOffset = 0;
         int    maxOffset = 0;
 
+        // What each variant corrects. correctFormants: shift formants by -k
+        // (Formant Correct). keepLength: stretch by 2^(k/12) so the variant,
+        // played k semitones up, lasts as long as the original (Keep Length).
+        bool   correctFormants = true;
+        bool   keepLength      = false;
+
         bool operator== (const FormantTableKey& o) const noexcept
         {
             return enabled == o.enabled
+                && correctFormants == o.correctFormants
+                && keepLength == o.keepLength
                 && minOffset == o.minOffset
                 && maxOffset == o.maxOffset
                 && std::abs (timeRatio - o.timeRatio) < 1.0e-6
@@ -97,15 +114,6 @@ namespace asampler
         // guitar sample is chipmunked at the top of its range and muddy at the
         // bottom. Only meaningful for pads in Keyboard mode.
         KeyZones   = 3
-    };
-
-    // Where channel aftertouch routes for a given pad. Append-only:
-    // AudioParameterChoice serialises by index.
-    enum class AftertouchDest : int
-    {
-        Off          = 0,
-        Volume       = 1,
-        FilterCutoff = 2
     };
 
     // Glide / portamento behaviour per pad. Append-only:
@@ -266,11 +274,16 @@ namespace asampler
         inline constexpr auto editLayer      = "edit_layer";
         inline constexpr auto midiLearnArm   = "midi_learn_arm";
         inline constexpr auto pitchBendRange = "pitch_bend_range";
-        inline constexpr auto vocalTargetPad = "vocal_target_pad";
+        inline constexpr auto auditionOnEdit = "audition_on_edit";
+
+        // Velocity of pads played from the computer keyboard (1..127).
+        inline constexpr auto keyVelocity    = "key_velocity";
+        // Move a freshly loaded sample's Start past its leading silence.
+        inline constexpr auto trimOnLoad     = "trim_on_load";
 
         // The pad the "Focus" proxy parameter group currently points at.
         // See FocusProxyParameter — this is the accessibility keystone: it
-        // turns ~950 host parameters into ~60 the user actually navigates.
+        // turns ~2,800 host parameters into ~90 the user actually navigates.
         inline constexpr auto focusedPad = "focused_pad";
 
         // Global musical key + scale, used by any pad with Scale Lock on.
@@ -300,8 +313,6 @@ namespace asampler
         inline juce::String padRepeatEnabled (int pad) { return "pad_" + juce::String (pad) + "_rptenable"; }
         inline juce::String padRepeatRate    (int pad) { return "pad_" + juce::String (pad) + "_rptrate";   }
         inline juce::String padOneShot       (int pad) { return "pad_" + juce::String (pad) + "_oneshot";   }
-        inline juce::String padAftertouchDest   (int pad) { return "pad_" + juce::String (pad) + "_atdest";   }
-        inline juce::String padAftertouchAmount (int pad) { return "pad_" + juce::String (pad) + "_atamount"; }
         inline juce::String padMute (int pad) { return "pad_" + juce::String (pad) + "_mute"; }
         inline juce::String padSolo (int pad) { return "pad_" + juce::String (pad) + "_solo"; }
         inline juce::String padGlideMode (int pad) { return "pad_" + juce::String (pad) + "_glidemode"; }
@@ -396,6 +407,44 @@ namespace asampler
         // Hold formants fixed as the pad is played across the keyboard, instead
         // of letting them ride up and down with the resampling ratio.
         inline juce::String padFormantCorrect (int pad) { return "pad_" + juce::String (pad) + "_fcorrect"; }
+
+        // Second LFO, LFO tempo sync and mod wheel routing.
+        inline juce::String padLfoSync        (int pad) { return "pad_" + juce::String (pad) + "_lfosync";   }
+        inline juce::String padLfo2Rate       (int pad) { return "pad_" + juce::String (pad) + "_lfo2rate";  }
+        inline juce::String padLfo2Depth      (int pad) { return "pad_" + juce::String (pad) + "_lfo2depth"; }
+        inline juce::String padLfo2Shape      (int pad) { return "pad_" + juce::String (pad) + "_lfo2shape"; }
+        inline juce::String padLfo2Dest       (int pad) { return "pad_" + juce::String (pad) + "_lfo2dest";  }
+        inline juce::String padLfo2Sync       (int pad) { return "pad_" + juce::String (pad) + "_lfo2sync";  }
+        inline juce::String padModWheelDest   (int pad) { return "pad_" + juce::String (pad) + "_mwdest";    }
+        inline juce::String padModWheelAmount (int pad) { return "pad_" + juce::String (pad) + "_mwamt";     }
+
+        // Per-layer velocity range (Velocity layer mode; overlapping ranges
+        // stack), trigger edge (press or release) and tuning. `layer` is 1-based.
+        inline juce::String padLayerVelLow (int pad, int layer)
+        {
+            return "pad_" + juce::String (pad) + "_layvlo" + juce::String (layer);
+        }
+        inline juce::String padLayerVelHigh (int pad, int layer)
+        {
+            return "pad_" + juce::String (pad) + "_layvhi" + juce::String (layer);
+        }
+        inline juce::String padLayerTrigger (int pad, int layer)
+        {
+            return "pad_" + juce::String (pad) + "_laytrig" + juce::String (layer);
+        }
+        inline juce::String padLayerTranspose (int pad, int layer)
+        {
+            return "pad_" + juce::String (pad) + "_laytr" + juce::String (layer);
+        }
+        inline juce::String padLayerFine (int pad, int layer)
+        {
+            return "pad_" + juce::String (pad) + "_layfine" + juce::String (layer);
+        }
+
+        // Change length without changing pitch (rendered, like Stretch).
+        inline juce::String padSpeed      (int pad) { return "pad_" + juce::String (pad) + "_speed";   }
+        // Notes played away from the root keep the sample's length.
+        inline juce::String padKeepLength (int pad) { return "pad_" + juce::String (pad) + "_keeplen"; }
     }
 
     class ASamplerProcessor : public juce::AudioProcessor,
@@ -417,23 +466,35 @@ namespace asampler
 
         const juce::String getName() const override;
         bool acceptsMidi() const override                  { return true; }
-        bool producesMidi() const override                 { return false; }
+        // Pads played from the computer keyboard are sent out as MIDI, so
+        // they can be recorded on another track.
+        bool producesMidi() const override                 { return true; }
         bool isMidiEffect() const override                 { return false; }
         // Longest possible tail across all pads (release + fade-out). Reporting
         // 0 here tells the host nothing sounds after the last note, and REAPER
         // will truncate release tails on render, freeze and bounce-in-place.
         double getTailLengthSeconds() const override;
 
-        int getNumPrograms() override                      { return 1; }
-        int getCurrentProgram() override                   { return 0; }
-        void setCurrentProgram (int) override              {}
-        const juce::String getProgramName (int) override   { return {}; }
+        // Host programs: 0 is "Current" (whatever the user has set up, and a
+        // no-op to select), 1..N are the factory kits. Exposing kits as
+        // programs puts them in the host's preset menu and, through JUCE's
+        // VST3 program parameter, in REAPER's FX parameter list, where a
+        // screen reader can reach them without opening the editor.
+        int getNumPrograms() override;
+        int getCurrentProgram() override;
+        void setCurrentProgram (int index) override;
+        const juce::String getProgramName (int index) override;
         void changeProgramName (int, const juce::String&) override {}
 
         void getStateInformation (juce::MemoryBlock&) override;
         void setStateInformation (const void*, int) override;
 
         juce::AudioProcessorValueTreeState& getState() noexcept { return state; }
+
+        // REAPER integration (record toggle, grabbing a timeline item). Set up
+        // by the VST3 wrapper when the host is REAPER; empty otherwise.
+        juce::VST3ClientExtensions* getVST3ClientExtensions() override;
+        ReaperApi& getReaperApi() noexcept { return reaperApi; }
 
         // ---- Sample loading API (message thread) ----
         //
@@ -464,6 +525,29 @@ namespace asampler
         // that says "still working").
         void loadSampleForPadLayerAsync (int padIndex, int layerIndex,
                                          const juce::File& file);
+
+        // ---- Sample browsing ----
+        //
+        // Step the pad's current sample to the next (+1) or previous (-1)
+        // audio file in the same folder, load it into the edit layer, play it,
+        // and announce "name, N of M". This is how a sighted producer skims a
+        // folder of kicks by ear; without it, every candidate costs a trip
+        // through the file dialog. Wraps at either end (the position spoken
+        // makes the wrap obvious). Asynchronous unless `synchronous` is true.
+        enum class BrowseResult
+        {
+            Started,        // async load in flight (the outcome is announced)
+            Success,        // synchronous load done
+            NoCurrentFile,  // nothing loaded on the pad to browse from
+            NoOtherFiles,   // the folder holds no other readable audio
+            LoadFailed,
+            InvalidPad
+        };
+        BrowseResult browseSample (int padIndex, int direction, bool synchronous = false);
+
+        // Readable audio files in `folder`, in natural (human) sort order:
+        // "kick 2" before "kick 10". Exposed for tests.
+        juce::Array<juce::File> listAudioFilesIn (const juce::File& folder) const;
 
         // Repair pads whose saved sample paths no longer resolve, by searching
         // `searchDir` recursively for files of the same name. Returns how many
@@ -511,40 +595,18 @@ namespace asampler
         // Current "Chop Mode" parameter, resolved to its enum value.
         ChopMode getCurrentChopMode() const;
 
-        // ---- Vocal generation API (SAPI5 text-to-speech, message thread) ----
-        //
-        // Render typed text to a vocal sample with the Windows Speech API and
-        // drop it straight onto a pad — a built-in, no-recording vocal source
-        // for chopping. The WAV is written under the per-user app-data folder so
-        // it persists and round-trips through project save/load exactly like a
-        // user-loaded sample. Every entry point sets a screen-reader status.
-        enum class VocalResult
-        {
-            Success,
-            EmptyText,     // nothing to speak
-            InvalidPad,
-            SynthFailed,   // SAPI5 produced no audio (e.g. no voice installed)
-            LoadFailed     // synthesised WAV could not be read back
-        };
-
-        // Speak `text` into `padIndex` at the current edit layer.
-        VocalResult synthesizeVocalForPad (int padIndex, const juce::String& text);
-
-        // Speak `text` into `padIndex`, then auto-chop it across the first N pads
-        // (using the current Chop Count / Chop Mode params).
-        VocalResult synthesizeVocalAndChop (int padIndex, const juce::String& text);
-
-        // Speak `text` into `padIndex`, then put that pad in Keyboard mode over
-        // [lowNote, highNote] with the root at lowNote, so the vocal plays
-        // pitched across the keyboard.
-        VocalResult synthesizeVocalAndSpread (int padIndex, const juce::String& text,
-                                              int lowNote = 48, int highNote = 72);
-
-        // Current "Vocal Target Pad" host parameter as a 0-based pad index.
-        int getCurrentVocalTargetPad() const;
-
         // 0-based index of the pad the Focus proxy group currently points at.
         int getCurrentFocusedPad() const;
+
+        // Point the Focus group (and the editor's pad actions) at `padIndex`
+        // (0-based), notifying the host but *not* recording an undo step:
+        // walking the pad grid with the arrow keys is navigation, and Undo
+        // must not step back through it.
+        void setFocusedPad (int padIndex);
+
+        // Mute / solo state, for spoken pad labels.
+        bool isPadMuted  (int padIndex) const;
+        bool isPadSoloed (int padIndex) const;
 
         // ---- Undo ----
         //
@@ -568,6 +630,10 @@ namespace asampler
         // note layout and character — the setup work — and leave the samples to
         // the user, so they are useful without shipping any audio.
         static juce::StringArray getFactoryKitNames();
+
+        // "1.0.0", from the CMake project version. Shown and spoken by the
+        // editor so a support question can start with "which version?".
+        static juce::String getVersionString();
         bool loadFactoryKit (int index);
 
         // ---- Pad utilities ----
@@ -627,15 +693,77 @@ namespace asampler
         //
         // Trigger `padIndex` from the UI without any external MIDI. Thread-safe:
         // the request is picked up at the top of the next processBlock.
-        void auditionPad (int padIndex, float velocity = 0.8f);
+        // `announce` = false plays silently: the editor's pads and keys pass
+        // that, since speaking "Audition Pad 5" over the sound itself only
+        // gets in the way of hearing it.
+        void auditionPad (int padIndex, float velocity = 0.8f, bool announce = true);
+
+        // Play `padIndex` from `startNorm` (0..1 of the sample) for at most
+        // `seconds`, without announcing anything. Used to let the user hear a
+        // slice-point edit: a sighted user sees the boundary move; a blind user
+        // has to hear it.
+        void auditionPadFrom (int padIndex, float startNorm, double seconds);
+
+        // Audition-on-edit. Called by the processor's timer: once a Start or
+        // End edit on one pad has settled (no further change for ~200 ms), play
+        // from the new Start, or the last ~300 ms before the new End. Only while
+        // the transport is stopped (so automation never triggers it), only for
+        // single-pad edits (a chop or kit load is not a slice edit), and only
+        // with the "Audition On Edit" parameter on. Public for tests.
+        void processEditAuditions();
 
         // For the editor: what's currently loaded on `padIndex` at the active
         // edit layer. Returns the file name (without path) or "default" if
         // that layer still holds the built-in tone.
         juce::String getPadSampleDisplayName (int padIndex) const;
 
+        // The file behind the pad's edit layer (or its first loaded layer),
+        // or an empty File when it holds the built-in tone.
+        juce::File getPadSampleFile (int padIndex) const;
+
         // Explicit layer-targeted display name.
         juce::String getPadLayerSampleDisplayName (int padIndex, int layerIndex) const;
+
+        // How `padIndex` is triggered, read from its live parameters, for
+        // labels and announcements: "note C1" for a Fixed pad, "keys C1 to C4,
+        // root C2" for a Keyboard pad. Labels must not assume the factory note
+        // layout — a user who re-notes a pad would otherwise hear the old note.
+        juce::String describePadTrigger (int padIndex) const;
+
+        // Length in seconds of the sample the slice-point parameters refer to
+        // on `padIndex` (0-based): the edit layer's sample if loaded, else the
+        // first loaded layer, else the built-in tone. Lock-free; safe to call
+        // from the host's parameter-text callbacks on any thread.
+        double getPadReferenceSeconds (int padIndex) const;
+
+        // "Describe sample": a spoken summary of what is on the pad, the facts
+        // a sighted producer reads off the waveform at a glance. Name, played
+        // length (and bars at the host tempo), channels and rate, peak level,
+        // number of hits, and where the material allows it, tempo, key or
+        // pitch. Analyses the pad's Start..End window on the edit layer. Sets
+        // the status (so the editor announces it) and returns the text.
+        juce::String describePad (int padIndex);
+
+        // ---- Resample / bounce ----
+        //
+        // Render one hit of `padIndex` with everything the pad does to it
+        // (envelope, filter and filter envelope, character, pitch, LFO,
+        // stereo shaping), write it to a WAV under the per-user app-data
+        // folder (ASampler/bounces), and load it onto the next empty pad.
+        // The classic MPC resample: commit a sound, then chop or re-pitch the
+        // result. Message thread; the render is offline and leaves the live
+        // voices alone.
+        struct BounceResult
+        {
+            bool       ok = false;
+            juce::File file;            // the WAV written (if any)
+            int        targetPad = -1;  // 0-based pad it was loaded onto, -1 if none was free
+        };
+        BounceResult bouncePad (int padIndex, const juce::File& outputDir = {});
+
+        // Supplies per-pad sample lengths to the parameter formatters, which
+        // are built before the pads exist.
+        using PadLengthFn = std::function<double (int padIndex)>;
 
         // Current "Edit Layer" host parameter as a 0-based index.
         int getCurrentEditLayer() const;
@@ -644,6 +772,8 @@ namespace asampler
 
         // Test/diagnostic helper: how many voices are currently sounding.
         int getActiveVoiceCount() const;
+        // Test/diagnostic helper: is `padIndex` (0-based) sounding?
+        bool isPadSounding (int padIndex) const;
 
         // Clamp a reader-reported sample count (int64) down to int. Anything
         // negative becomes 0; anything past INT_MAX is capped at INT_MAX.
@@ -669,6 +799,120 @@ namespace asampler
         // Used by the learn workflow to decide what to bind on the next
         // incoming CC while the arm parameter is on.
         int getLastTouchedParameterIndex() const;
+
+        // ---- Pad names ----
+        //
+        // A name the user gives a pad ("Snare 2"). Spoken with the pad, saved
+        // with the project and with kits. Empty = no name.
+        void setPadName (int padIndex, const juce::String& name);
+        juce::String getPadName (int padIndex) const;
+
+        // ---- Apply a setting to many pads ----
+        //
+        // The per-pad controls, in Focus-group order, so the editor can offer
+        // them by name. Index = position in that list.
+        static int          getNumPadControls();
+        static juce::String getPadControlName (int index);
+        static juce::String getPadControlSection (int index);
+        juce::String        getPadControlValueText (int padIndex, int controlIndex) const;
+
+        // Copy one control's value (or every control in `section`) from
+        // `sourcePad` to every pad in [firstPad, lastPad]. One undo step.
+        // Returns how many pads changed.
+        int applyControlToPads (int sourcePad, int controlIndex, int firstPad, int lastPad);
+        int applySectionToPads (int sourcePad, const juce::String& section, int firstPad, int lastPad);
+
+        // ---- Note learn ----
+        //
+        // The next MIDI note played sets the pad's Note (the root, in Keyboard
+        // mode), Low Note or High Note. The note is consumed: it does not play.
+        enum class NoteLearnTarget { Note = 0, LowNote = 1, HighNote = 2 };
+        void armNoteLearn (int padIndex, NoteLearnTarget target);
+        void cancelNoteLearn();
+        bool isNoteLearnArmed() const noexcept { return noteLearnPad.load() >= 0; }
+        // Applies a note the audio thread captured. Called by the timer; public
+        // for tests.
+        void processPendingNoteLearn();
+
+        // ---- Loading many files at once ----
+        enum class MultiLoadMode
+        {
+            OnePerPad,        // file k onto pad startPad + k (layer 1)
+            RoundRobin,       // all onto startPad's layers, Layer Mode Round Robin
+            VelocityLayers    // all onto startPad's layers, velocity ranges spread evenly
+        };
+        // Loads in the background (one read job, one announcement) unless
+        // `synchronous`. Files beyond the last pad or layer are skipped and
+        // the count is announced. Returns how many will be loaded.
+        int loadSamples (int startPad, const juce::Array<juce::File>& files, MultiLoadMode mode,
+                         bool synchronous = false);
+
+        // Spread the velocity ranges of the pad's loaded press layers evenly
+        // over 0..127, in layer order (soft to hard). Undoable.
+        int spreadVelocityLayers (int padIndex);
+
+        // ---- Kits: what a save includes ----
+        enum class KitSaveMode
+        {
+            Paths,        // parameters + absolute sample paths (the default)
+            WithSamples,  // also copies every sample into "<kit> samples" beside the kit
+            Template      // parameters only; loading it keeps the current samples
+        };
+        bool saveKitToFile (const juce::File& file, KitSaveMode mode);
+
+        // ---- Silence trimming ----
+        //
+        // Move the pad's Start past leading silence (anything 30 dB below the
+        // peak) and its End to where the sound has died away (60 dB below),
+        // measured on the edit layer's sample. Non-destructive and undoable.
+        bool trimSilence (int padIndex);
+
+        // ---- Raw preview player ----
+        //
+        // Play a buffer once on the main output, outside any pad (replacing
+        // whatever preview was playing). Used for slice-point scrubbing.
+        void playPreview (std::shared_ptr<const Sample> sample);
+        void stopPreview();
+        bool isPreviewPlaying() const noexcept { return previewActive.load(); }
+
+        // ---- Slice-point scrubbing ----
+        //
+        // Play a short snippet that lets a slice point be placed by ear: ~80 ms
+        // from a Start position, or the ~150 ms before an End position played
+        // backwards. Does not change the parameter.
+        void previewSlicePoint (int padIndex, bool isEnd, float norm);
+        // Set Start or End (as one undo step) and announce it.
+        void setSlicePoint (int padIndex, bool isEnd, float norm);
+        float getSlicePoint (int padIndex, bool isEnd) const;
+
+        // ---- Sample preview (try before you keep) ----
+        //
+        // Step through the audio files in the pad's folder (or `file`'s) and
+        // play each candidate *on the pad*, with all its settings, without
+        // replacing the pad's sample. While the transport runs the pad is not
+        // auditioned: the candidate is simply what the pad plays in the beat.
+        // keepPreview loads the candidate for real; cancelPreview goes back.
+        BrowseResult previewSample (int padIndex, int direction, bool synchronous = false);
+        BrowseResult previewSampleFile (int padIndex, const juce::File& file, bool synchronous = false);
+        bool keepPreview (int padIndex);
+        void cancelPreview (int padIndex);
+        bool isPreviewing (int padIndex) const;
+        juce::File getPreviewFile (int padIndex) const;
+
+        // ---- Live notes (computer keyboard) ----
+        //
+        // A pad key pressed or released in the editor: played through the full
+        // note dispatch, and sent to the plugin's MIDI output. Thread-safe.
+        void queueLiveNote (int midiNote, bool isNoteOn);
+        // The note a pad key plays: the pad's Note (its root in Keyboard mode).
+        int  getPadPlayNote (int padIndex) const;
+
+        // ---- REAPER ----
+        bool toggleReaperRecord();
+        // Render the one selected REAPER item (glue, with its fades, rate,
+        // volume and take FX), copy the result to the app-data folder and load
+        // it onto `padIndex`. REAPER's project is restored with an undo.
+        bool grabReaperItem (int padIndex, const juce::File& outputDir = {});
 
         // juce::AudioProcessorParameter::Listener
         void parameterValueChanged    (int parameterIndex, float newValue) override;
@@ -699,7 +943,8 @@ namespace asampler
 
             // Bumped on every render request so a slow render that has been
             // superseded discards its result instead of overwriting a newer one.
-            int renderGeneration = 0;
+            // Atomic because the render job polls it to stop early.
+            std::atomic<int> renderGeneration { 0 };
 
             // Per-note formant-corrected variants (Keyboard mode only). Null
             // when correction is off. Takes precedence over `processed`, whose
@@ -707,8 +952,8 @@ namespace asampler
             AtomicSharedPtr<const FormantTable> formantTable;
 
             // What the table was built for. Message-thread only.
-            FormantTableKey tableKey;
-            int             tableGeneration = 0;
+            FormantTableKey  tableKey;
+            std::atomic<int> tableGeneration { 0 };
 
             // Debounce for table rebuilds. Sweeping the Pitch knob walks the
             // required offset range a semitone at a time; without this, every
@@ -722,7 +967,8 @@ namespace asampler
             std::array<PadLayer, kNumLayers> layers;
         };
 
-        static juce::AudioProcessorValueTreeState::ParameterLayout makeParameterLayout();
+        static juce::AudioProcessorValueTreeState::ParameterLayout
+            makeParameterLayout (const PadLengthFn& padSeconds);
         static BusesProperties makeBusesProperties();
 
         struct PadParamPtrs
@@ -750,8 +996,6 @@ namespace asampler
             std::atomic<float>* repeatEnabled    = nullptr;
             std::atomic<float>* repeatRate       = nullptr;
             std::atomic<float>* oneShot          = nullptr;
-            std::atomic<float>* aftertouchDest   = nullptr;
-            std::atomic<float>* aftertouchAmount = nullptr;
             std::atomic<float>* mute             = nullptr;
             std::atomic<float>* solo             = nullptr;
             std::atomic<float>* glideMode        = nullptr;
@@ -793,10 +1037,25 @@ namespace asampler
             std::atomic<float>* stretchMode      = nullptr;
             std::atomic<float>* formant          = nullptr;
             std::atomic<float>* formantCorrect    = nullptr;
+            std::atomic<float>* lfoSync          = nullptr;
+            std::atomic<float>* lfo2Rate         = nullptr;
+            std::atomic<float>* lfo2Depth        = nullptr;
+            std::atomic<float>* lfo2Shape        = nullptr;
+            std::atomic<float>* lfo2Dest         = nullptr;
+            std::atomic<float>* lfo2Sync         = nullptr;
+            std::atomic<float>* modWheelDest     = nullptr;
+            std::atomic<float>* modWheelAmount   = nullptr;
             std::array<std::atomic<float>*, kNumLayers> layerGain     {};
             std::array<std::atomic<float>*, kNumLayers> layerLowNote  {};
             std::array<std::atomic<float>*, kNumLayers> layerHighNote {};
             std::array<std::atomic<float>*, kNumLayers> layerRootNote {};
+            std::array<std::atomic<float>*, kNumLayers> layerVelLow   {};
+            std::array<std::atomic<float>*, kNumLayers> layerVelHigh  {};
+            std::array<std::atomic<float>*, kNumLayers> layerTrigger  {};
+            std::array<std::atomic<float>*, kNumLayers> layerTranspose {};
+            std::array<std::atomic<float>*, kNumLayers> layerFine     {};
+            std::atomic<float>* speed            = nullptr;
+            std::atomic<float>* keepLength       = nullptr;
         };
 
         // Read an audio file into a Sample without touching any pad state, so
@@ -825,23 +1084,28 @@ namespace asampler
         void setStatus (const juce::String& message);
 
         // Set a ranged host parameter to a plain (real-world) value and notify
-        // the host, so the change shows in the FX list / automation. Used by the
-        // vocal "spread" helper to flip a pad into Keyboard mode.
+        // the host, so the change shows in the FX list / automation, and lands in
+        // the undo history.
         void setRangedParam (const juce::String& paramId, float plainValue);
 
         void handleNoteOn  (int midiNote, float velocity);
         void handleNoteOff (int midiNote);
+        // Start the pad's release-trigger layers for `midiNote`, with the
+        // velocity its note-on had.
+        void triggerReleaseLayers (int padIndex, int midiNote);
+        // Whether `midiNote` reaches pad `padIndex`. Fixed: the pad's Note.
+        // Keyboard: anything in [Low Note, High Note]. Where the two overlap,
+        // a Fixed pad holding a loaded sample keeps its note and the Keyboard
+        // pad skips it; a Fixed pad still on the built-in tone steps aside
+        // for the Keyboard pad. Either way one note sounds one thing.
+        bool padRespondsToNote (int padIndex, int midiNote) const noexcept;
+        bool keyboardPadCovers (int midiNote) const noexcept;
+
+        // Does any layer of the pad hold something other than the built-in
+        // tone? Safe on the audio thread (compares sample pointers rather
+        // than reading the message-thread file path).
+        bool padHoldsLoadedSample (int padIndex) const noexcept;
         void handlePitchBend (int wheelValue);
-        void handleAftertouch (int value);   // 0..127
-
-        // Compute the effective AT-driven volume and cutoff multipliers
-        // for `padIndex` from the current AT value + that pad's routing
-        // params. Both default to 1.0 (no modulation) when AT is off or
-        // the pad's destination is Off.
-        void computeAftertouchMods (int padIndex,
-                                    float& outVolMult,
-                                    float& outCutoffMult) const;
-
         // Resolve the per-pad mute/solo state into a gate in [0, 1]. Returns
         // 0.0f if the pad should be silenced this block, 1.0f otherwise.
         // Rule: if any pad is soloed, only non-muted soloed pads play; with
@@ -853,10 +1117,31 @@ namespace asampler
         // automation is audible mid-note. See VoiceLiveParams.
         VoiceLiveParams buildLiveParams (int padIndex) const;
 
-        // Which velocity layer a trigger should use, per the pad's Layer Mode.
-        // Resolved before pitch is computed because Key Zones mode supplies the
-        // root note that the pitch offset is measured from.
+        // Which layers a trigger plays, per the pad's Layer Mode, written to
+        // `out` (room for kNumLayers); returns how many. Velocity mode returns
+        // every loaded layer whose velocity range holds the hit, so overlapping
+        // ranges stack; the other modes return one. `onRelease` picks among the
+        // layers whose Trigger is Release (played at note-off) instead of the
+        // Press ones. A pad with nothing loaded plays layer 0's built-in tone on
+        // press. Resolved before pitch is computed because Key Zones mode
+        // supplies the root note that the pitch offset is measured from.
+        int selectLayersForTrigger (int padIndex, int midiNote, float velocity,
+                                    bool onRelease, int* out) const;
+
+        // The first layer selectLayersForTrigger would pick on press.
         int selectLayerForTrigger (int padIndex, int midiNote, float velocity) const;
+
+        // Does this layer hold a user sample (not the built-in tone)? Audio
+        // thread safe: compares sample pointers, never the file path.
+        bool layerIsLoaded (int padIndex, int layerIndex) const noexcept;
+
+        // Swap a layer's audio and invalidate everything derived from it (the
+        // stretch render, the formant table and their keys). Every place that
+        // replaces a layer's sample goes through here, so no path can leave a
+        // stale render of the previous sample playing.
+        void setLayerAudio (int padIndex, int layerIndex,
+                            std::shared_ptr<const Sample> sample,
+                            const juce::String& filePath, bool missing = false);
 
         // ---- Offline stretch / formant rendering ----
         //
@@ -883,8 +1168,12 @@ namespace asampler
 
         // Render one table synchronously. Shared by the background job and the
         // force-now entry point so both produce identical results.
+        // `shouldAbort` stops a superseded build early (the result is then
+        // discarded). Variants render in parallel across the render pool's
+        // share of cores.
         std::shared_ptr<const FormantTable>
-            buildFormantTable (const Sample& source, const FormantTableKey& key) const;
+            buildFormantTable (const Sample& source, const FormantTableKey& key,
+                               const std::function<bool()>& shouldAbort = {}) const;
 
         // How many renders are in flight, so the UI can say so and tests can
         // wait for quiescence.
@@ -904,6 +1193,37 @@ namespace asampler
         // the only feedback is spoken.
         juce::ThreadPool                   loaderPool { 1 };
 
+        // Stretch / formant renders. Separate from the loader so a long render
+        // never holds up a sample load the user is waiting to hear, and with
+        // several threads so pads re-render side by side after a tempo change.
+        juce::ThreadPool                   renderPool { juce::ThreadPoolOptions{}
+                                                            .withThreadName ("ASampler render")
+                                                            .withNumberOfThreads (renderThreadCount()) };
+        static int renderThreadCount() noexcept
+        {
+            return juce::jlimit (1, 4, juce::SystemStats::getNumCpus() - 1);
+        }
+
+        // Shared with callAsync callbacks queued by loader jobs. Cleared in the
+        // destructor (message thread, as are the callbacks), so a load that
+        // finishes just as the plugin closes is dropped instead of touching a
+        // destroyed processor.
+        std::shared_ptr<bool>              alive = std::make_shared<bool> (true);
+
+        // Selected host program (see getNumPrograms). Saved with the project:
+        // hosts commonly re-send the current program after restoring state,
+        // and re-selecting the same program must not reload the kit over the
+        // user's edits.
+        std::atomic<int>                   currentProgram { 0 };
+
+        // Background read + message-thread apply. `onDone` (optional) runs on
+        // the message thread after the slot is updated and the status set.
+        void startAsyncLoad (int padIndex, int layerIndex, const juce::File& file,
+                             std::function<void (LoadResult)> onDone);
+
+        // Message-thread completion shared by the sync and async browse paths.
+        void finishBrowse (int padIndex, const juce::File& file, int position, int total);
+
         std::array<PadParamPtrs, kNumPads> padParams {};
         std::atomic<float>*                masterGainParam     = nullptr;
         std::atomic<float>*                chopCountParam      = nullptr;
@@ -911,15 +1231,20 @@ namespace asampler
         std::atomic<float>*                editLayerParam      = nullptr;
         std::atomic<float>*                midiLearnArmParam   = nullptr;
         std::atomic<float>*                pitchBendRangeParam = nullptr;
-        std::atomic<float>*                vocalTargetPadParam = nullptr;
         std::atomic<float>*                focusedPadParam     = nullptr;
         std::atomic<float>*                scaleKeyParam       = nullptr;
         std::atomic<float>*                scaleTypeParam      = nullptr;
+        std::atomic<float>*                keyVelocityParam    = nullptr;
+        std::atomic<float>*                trimOnLoadParam     = nullptr;
 
         // The Focus proxy parameters, in padParamSpecs() order. Owned by the
         // APVTS; these are non-owning pointers used to refresh every proxy
         // when the focused pad changes.
         std::vector<FocusProxyParameter*>  focusProxies;
+
+        // Per-pad sample length last reported to the host (timer thread only),
+        // so a swap that changes the slice-point text triggers a host refresh.
+        std::array<double, kNumPads>       lastReportedPadSeconds {};
 
         // Clipboard for copyPad / pastePad. Holds plain (real-world) parameter
         // values keyed by the field suffix, plus the pad's sample paths.
@@ -929,6 +1254,30 @@ namespace asampler
         // Value is velocity * 1000 (so it stays integral), or -1 for "none".
         std::array<std::atomic<int>, kNumPads> pendingAudition {};
 
+        // Companions to pendingAudition, written before it (release order):
+        // start override as 0..1 (negative = the pad's own Start), and how
+        // long to hold the note before releasing it, in milliseconds.
+        std::array<std::atomic<float>, kNumPads> pendingAuditionStart {};
+        std::array<std::atomic<int>, kNumPads>   pendingAuditionHoldMs {};
+
+        // Audio-thread audition state: samples left before the held audition
+        // note is released, the note to release, and a start override that the
+        // next trigger of the pad consumes.
+        std::array<int, kNumPads>   auditionHoldRemaining {};
+        std::array<int, kNumPads>   auditionNote {};
+        std::array<float, kNumPads> auditionStartOverride {};
+
+        // Audition-on-edit bookkeeping. Written from parameterValueChanged
+        // (possibly the audio thread), so atomics only. Kind: 0 none,
+        // 1 Start edited, 2 End edited.
+        std::array<std::atomic<int>, kNumPads>         sliceEditKind {};
+        std::array<std::atomic<juce::uint32>, kNumPads> sliceEditTimeMs {};
+        std::vector<int>                               sliceEditLookup;   // param index -> pad*2 + (0 start | 1 end), or -1
+        std::atomic<bool>                              transportPlaying { false };
+        std::atomic<float>*                            auditionOnEditParam = nullptr;
+
+        void queueAudition (int padIndex, float velocity, float startNorm, double holdSeconds);
+
         // Index of the "Focused Pad" parameter in getParameters(), cached so
         // parameterValueChanged can recognise it without a string compare on
         // what is potentially the audio thread. -1 until resolved.
@@ -937,10 +1286,9 @@ namespace asampler
         // Current MIDI pitch bend (in semitones), updated from MIDI 0xE0
         // messages in processBlock. Audio-thread only.
         float                              currentPitchBendSemitones = 0.0f;
-
-        // Current channel aftertouch, normalised to 0..1. Updated from
-        // MIDI 0xD0 messages in processBlock. Audio-thread only.
-        float                              currentAftertouch         = 0.0f;
+        // Last mod wheel (CC 1) position, 0..1. Atomic because bounce plans a
+        // trigger on the message thread.
+        std::atomic<float>                 currentModWheel { 0.0f };
 
         std::shared_ptr<const Sample>      defaultSample;
         std::array<Pad, kNumPads>          pads;
@@ -1003,6 +1351,33 @@ namespace asampler
         // Host tempo, falling back to 120 BPM when the host reports none
         // (offline render, stopped transport in some hosts).
         double getHostBpm() const;
+        std::atomic<double> cachedHostBpm { 0.0 };   // written by processBlock
+
+        // Everything one hit of a pad needs: the voice settings, the note the
+        // voice is filed under (for note-off), and the sample to play. Shared
+        // by live triggers and offline bouncing so both sound the same.
+        // `liveTrigger` = false leaves the audio-thread state (glide history,
+        // pitch bend, audition overrides) untouched and unused, so it is safe
+        // to call from the message thread.
+        struct TriggerPlan
+        {
+            VoiceConfig                    cfg;
+            int                            triggerNote = 0;
+            std::shared_ptr<const Sample>  sample;
+            VoiceConfig                    baseCfg;   // cfg before the layer was applied
+        };
+        TriggerPlan planTrigger (int padIndex, int midiNote, float velocity,
+                                 int selectedLayer, bool liveTrigger);
+
+        // The same hit on another layer of the pad: `base` is the plan's config
+        // before any layer-specific part (gain trim, transpose, sample) was
+        // applied. Used for stacked velocity layers, so they all share one
+        // glide, pitch and start.
+        TriggerPlan planLayer (int padIndex, int layerIndex, VoiceConfig base, int triggerNote) const;
+
+        // Per-pad, per-note velocity of the last note-on, so a release-trigger
+        // layer plays with the dynamics the key was struck with. Audio thread.
+        std::array<std::array<float, 128>, kNumPads> noteOnVelocity {};
 
         // Pre-scan input MIDI for CC events: if armed and the last-touched
         // parameter is valid, bind the CC to it and disarm. Then apply each
@@ -1028,6 +1403,65 @@ namespace asampler
         VoicePool                          voicePool;
 
         juce::String                       lastStatus;
+
+        // Pad names. Message thread.
+        std::array<juce::String, kNumPads> padNames;
+
+        // Note learn: armed pad (-1 = off) and target; the audio thread writes
+        // the captured note, the timer applies it.
+        std::atomic<int>                   noteLearnPad { -1 };
+        std::atomic<int>                   noteLearnTarget { 0 };
+        std::atomic<int>                   learnedNote { -1 };
+        int                                noteLearnSwallowOff = -1;   // audio thread
+
+        // Raw preview player (audio thread reads, message thread swaps).
+        AtomicSharedPtr<const Sample>      previewSampleBuffer;
+        std::atomic<int>                   previewGeneration { 0 };
+        std::atomic<bool>                  previewActive { false };
+        int                                previewPlayedGeneration = 0;   // audio thread
+        double                             previewPosition = 0.0;         // audio thread
+
+        // Try-before-you-keep: a candidate sample the pad plays in place of
+        // its edit layer, and the file it came from.
+        std::array<AtomicSharedPtr<const Sample>, kNumPads> previewOverride;
+        std::array<juce::String, kNumPads>                  previewFilePath;   // message thread
+
+        // Live notes from the editor, single producer (message thread), single
+        // consumer (audio thread).
+        juce::AbstractFifo                 liveNoteFifo { 256 };
+        std::array<int, 256>               liveNoteData {};   // note | (on ? 0x100 : 0)
+
+        // Folder of the last sample loaded anywhere, so previewing on an empty
+        // pad has somewhere to start.
+        juce::File                         lastSampleFolder;
+
+        ReaperApi                          reaperApi;
+        std::unique_ptr<juce::VST3ClientExtensions> vst3Extensions;
+
+        juce::File resolveKitSamplePath (const juce::File& kitFile, const juce::ValueTree& entry) const;
+        void maybeTrimOnLoad (int padIndex, int layerIndex);
+        bool trimSilenceImpl (int padIndex, std::shared_ptr<const Sample> sample,
+                              bool wholeSample, bool announce);
+        int  spreadVelocityLayersImpl (int padIndex, bool announce);
+        void applyMultiLoad (int startPad, MultiLoadMode mode, const juce::Array<juce::File>& files,
+                             const std::vector<std::shared_ptr<const Sample>>& samples);
+
+        // Preview buffers the audio thread may still be reading. Kept here so
+        // the last reference is never dropped on the audio thread.
+        std::vector<std::shared_ptr<const Sample>> previewRetired;
+        juce::ValueTree padNamesToTree() const;
+        void padNamesFromTree (const juce::ValueTree& names);
+
+        // Shared by previewSample / previewSampleFile: read `file` and make it
+        // the pad's candidate.
+        BrowseResult startPreview (int padIndex, const juce::File& file, int position, int total,
+                                   bool synchronous);
+        void applyPreview (int padIndex, const juce::File& file, std::shared_ptr<const Sample> sample,
+                           int position, int total);
+
+        // The sample slice points refer to on a pad (edit layer, else first
+        // loaded layer, else the built-in tone).
+        std::shared_ptr<const Sample> referenceSample (int padIndex) const;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ASamplerProcessor)
     };

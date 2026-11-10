@@ -66,13 +66,8 @@ namespace asampler
         // Called from processBlock whenever a MIDI pitch-bend event arrives.
         void setPitchBendSemitones (float semitones);
 
-        // Push aftertouch volume/cutoff modulation multipliers onto every
-        // active voice belonging to `padIndex`. Both default to 1.0 (no
-        // modulation). The plugin layer computes the per-pad destination
-        // routing and amount; voices just apply the resulting multipliers.
-        void setAftertouchModForPad (int padIndex,
-                                     float volumeMultiplier,
-                                     float cutoffMultiplier);
+        // Push the mod wheel position (0..1) onto every active voice.
+        void setModWheel (float value);
 
         // Push the mute/solo gate onto every active voice belonging to
         // `padIndex`. 1.0 = pad sounds, 0.0 = pad silenced. Voices keep

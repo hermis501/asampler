@@ -1,31 +1,91 @@
 #include "PluginEditor.h"
+#include "ClipboardFiles.h"
 
 namespace asampler
 {
     namespace
     {
-        constexpr int kRowHeight    = 28;
-        constexpr int kRowSpacing   = 4;
-        constexpr int kPadding      = 12;
+        constexpr int kPadding       = 12;
+        constexpr int kGap           = 8;
         constexpr int kHeadingHeight = 32;
-        constexpr int kStatusHeight  = 32;
-        constexpr int kLoadButtonWidth     = 300;
-        constexpr int kAuditionButtonWidth = 110;
-        constexpr int kResetButtonWidth    = 140;
-        constexpr int kChopButtonWidth     = 200;
-        constexpr int kButtonGap           = 8;
-        constexpr int kUtilityButtonWidth  = 132;
+        constexpr int kLabelHeight   = 24;
+        constexpr int kRowHeight     = 28;
+        constexpr int kPadWidth      = 180;
+        constexpr int kPadHeight     = 52;
+        constexpr int kButtonWidth   = 180;
+        constexpr int kStatusHeight  = 72;
+        constexpr int kColumns       = 4;
 
-        juce::String midiNoteName (int note)
+        // MPC-style QWERTY layout: the bottom keyboard row is pads 1-4 and each
+        // row above it steps up a bank of four, matching the pad grid.
+        constexpr const char* kPadKeyRows[4] = { "zxcv", "asdf", "qwer", "1234" };
+
+       #if JUCE_MAC
+        const juce::String kCmd = "Cmd";
+       #else
+        const juce::String kCmd = "Ctrl";
+       #endif
+
+        void setButtonLabel (juce::Button& b, const juce::String& text)
         {
-            return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
+            // The accessible title takes precedence over the visible text, so
+            // the two are always set together. Only on change: retitling the
+            // focused control makes some screen readers repeat it.
+            if (b.getButtonText() != text) b.setButtonText (text);
+            if (b.getTitle() != text)      b.setTitle (text);
         }
 
-        // MPC-style QWERTY pad layout: the bottom keyboard row is pads 1-4 and
-        // each row above it steps up a bank of four, matching how the pads are
-        // numbered on hardware.
-        constexpr const char* kPadKeyRows[4] = { "zxcv", "asdf", "qwer", "1234" };
+        juce::String padKeyName (int padIndex)
+        {
+            const int slot = padIndex % kPadsPerBank;
+            return juce::String::charToString (juce::CharacterFunctions::toUpperCase (
+                static_cast<juce::juce_wchar> (kPadKeyRows[slot / 4][slot % 4])));
+        }
+
+        juce::String bankName (int bank)
+        {
+            return juce::String::charToString (static_cast<juce::juce_wchar> ('A' + bank));
+        }
+
+        juce::String bankRange (int bank)
+        {
+            return juce::String (bank * kPadsPerBank + 1) + " to " + juce::String ((bank + 1) * kPadsPerBank);
+        }
+
+        bool isAudioFile (const juce::File& f)
+        {
+            return f.hasFileExtension ("wav;aif;aiff;flac;ogg;mp3");
+        }
+
+        // A slice point as the host list reads it ("1.250 s").
+        juce::String slicePointText (ASamplerProcessor& proc, int padIndex, bool isEnd, float norm)
+        {
+            const int p = padIndex + 1;
+            if (auto* param = proc.getState().getParameter (isEnd ? param_ids::padEnd (p) : param_ids::padStart (p)))
+                return param->getText (param->convertTo0to1 (norm), 0);
+            return juce::String (norm, 3);
+        }
     }
+
+    // ---- PadButton ----------------------------------------------------------
+
+    bool ASamplerEditor::PadButton::keyPressed (const juce::KeyPress& key)
+    {
+        if (onKeyFirst && onKeyFirst (key))
+            return true;
+        if (onArrowKey && onArrowKey (key))
+            return true;
+        return juce::TextButton::keyPressed (key);   // Space / Enter click
+    }
+
+    void ASamplerEditor::PadButton::focusGained (FocusChangeType cause)
+    {
+        juce::TextButton::focusGained (cause);
+        if (onFocus)
+            onFocus();
+    }
+
+    // ---- Construction -------------------------------------------------------
 
     ASamplerEditor::ASamplerEditor (ASamplerProcessor& proc)
         : juce::AudioProcessorEditor (proc),
@@ -33,194 +93,148 @@ namespace asampler
     {
         setWantsKeyboardFocus (true);
 
-        // Heading. Marked as static text so a screen reader skim-navigates
-        // landmarks rather than reading it as if it were interactive.
-        heading.setText ("ASampler - Pad Sample Loader", juce::dontSendNotification);
-        heading.setFont (juce::Font (juce::FontOptions (20.0f, juce::Font::bold)));
-        heading.setJustificationType (juce::Justification::centredLeft);
-        heading.setAccessible (true);
-        heading.setTitle ("ASampler Pad Sample Loader");
-        heading.setDescription ("Headings for each pad follow. Tab to navigate Load and Reset buttons.");
-        addAndMakeVisible (heading);
-
-        // Vocal generator row. TextEditor exposes an editable-text UIA role, and
-        // the three buttons expose Button roles — all screen-reader navigable.
-        vocalLabel.setText ("Vocal generator (SAPI5 text to speech)", juce::dontSendNotification);
-        vocalLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
-        vocalLabel.setJustificationType (juce::Justification::centredLeft);
-        vocalLabel.setAccessible (true);
-        vocalLabel.setTitle ("Vocal generator");
-        addAndMakeVisible (vocalLabel);
-
-        vocalEditor.setMultiLine (false);
-        vocalEditor.setReturnKeyStartsNewLine (false);
-        vocalEditor.setTextToShowWhenEmpty ("Type words to speak, then Generate",
-                                            juce::Colours::grey);
-        vocalEditor.setWantsKeyboardFocus (true);
-        vocalEditor.setTitle ("Vocal text");
-        vocalEditor.setDescription ("Type text, then use a Generate button to speak it onto the target pad.");
-        addAndMakeVisible (vocalEditor);
-
-        vocalSpeakButton.setWantsKeyboardFocus (true);
-        vocalSpeakButton.onClick = [this] { onVocalSpeakClicked(); };
-        addAndMakeVisible (vocalSpeakButton);
-
-        vocalChopButton.setWantsKeyboardFocus (true);
-        vocalChopButton.onClick = [this] { onVocalChopClicked(); };
-        addAndMakeVisible (vocalChopButton);
-
-        vocalSpreadButton.setWantsKeyboardFocus (true);
-        vocalSpreadButton.onClick = [this] { onVocalSpreadClicked(); };
-        addAndMakeVisible (vocalSpreadButton);
-
-        // Keep the vocal button labels naming the current target pad.
-        if (auto* targetParam = processor.getState().getParameter (param_ids::vocalTargetPad))
+        auto setupLabel = [this] (juce::Label& l, const juce::String& text, float size, bool bold)
         {
-            vocalTargetAttachment = std::make_unique<juce::ParameterAttachment> (
-                *targetParam,
-                [this] (float) { refreshVocalLabels(); });
-            vocalTargetAttachment->sendInitialUpdate();
-        }
+            l.setText (text, juce::dontSendNotification);
+            l.setFont (juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain)));
+            l.setJustificationType (juce::Justification::centredLeft);
+            l.setAccessible (true);
+            l.setTitle (text);
+            addAndMakeVisible (l);
+        };
 
-        // Kit / utility row.
-        utilityLabel.setText ("Kit and pad tools", juce::dontSendNotification);
-        utilityLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
-        utilityLabel.setJustificationType (juce::Justification::centredLeft);
-        utilityLabel.setAccessible (true);
-        utilityLabel.setTitle ("Kit and pad tools");
-        addAndMakeVisible (utilityLabel);
+        const auto version = "ASampler " + ASamplerProcessor::getVersionString();
+        setupLabel (heading, version, 20.0f, true);
+        heading.setDescription ("Press F1 for keyboard help.");
 
-        addButton (undoButton, "Undo", [this] { onUndoClicked(); },
-                   "Undo the last parameter change, including a chop across pads.");
-        addButton (redoButton, "Redo", [this] { onRedoClicked(); });
-        addButton (saveKitButton, "Save kit...", [this] { onSaveKitClicked(); },
-                   "Save all pad settings and sample paths to a kit file.");
-        addButton (loadKitButton, "Load kit...", [this] { onLoadKitClicked(); });
-        addButton (factoryKitButton, "Factory kit...", [this] { onFactoryKitClicked(); },
-                   "Load a built-in starting point. Changes settings only, not samples.");
-        addButton (relinkButton, "Relink samples...", [this] { onRelinkClicked(); },
-                   "Search a folder for samples this project could not find.");
-        addButton (copyPadButton, "Copy pad", [this] { onCopyPadClicked(); });
-        addButton (pastePadButton, "Paste pad", [this] { onPastePadClicked(); });
-        addButton (clearAllButton, "Clear all pads", [this] { onClearAllClicked(); },
-                   "Reset every pad to the default sample. Undo restores them.");
-        addButton (exportMidiButton, "Export slice MIDI...", [this] { onExportMidiClicked(); },
-                   "Write a MIDI file with one note per slice, to import into your project.");
-        addButton (normaliseButton, "Normalise layer", [this] { onNormaliseClicked(); },
-                   "Set the focused pad's layer gain so its peak sits at -1 dB.");
-        addButton (snapTransientsButton, "Snap to transients",
-                   [this] { onSnapTransientsClicked(); },
-                   "Move the focused pad's start and end onto the nearest detected onsets.");
-        addButton (renderStretchButton, "Render stretch",
-                   [this] { onRenderStretchClicked(); },
-                   "Apply the focused pad's time-stretch and formant settings now, "
-                   "instead of waiting for the background render.");
-        addButton (renderFormantsButton, "Render formants",
-                   [this] { onRenderFormantsClicked(); },
-                   "Build the per-note formant correction for the focused pad now, "
-                   "so formants stay fixed as it is played across the keyboard.");
+        setupLabel (gridLabel, "Pads", 14.0f, true);
+        addButton (bankButton, [this] { switchBank(); },
+                   "Show the other bank of 16 pads. Page Up and Page Down do the same from the grid.");
 
         for (int i = 0; i < kNumPads; ++i)
         {
-            auto load = std::make_unique<juce::TextButton>();
-            load->setWantsKeyboardFocus (true);
-            load->onClick = [this, i] { onLoadClicked (i); };
-            addAndMakeVisible (load.get());
-            loadButtons[i] = std::move (load);
-
-            auto audition = std::make_unique<juce::TextButton>();
-            audition->setWantsKeyboardFocus (true);
-            audition->onClick = [this, i] { onAuditionClicked (i); };
-            addAndMakeVisible (audition.get());
-            auditionButtons[i] = std::move (audition);
-
-            auto reset = std::make_unique<juce::TextButton>();
-            reset->setWantsKeyboardFocus (true);
-            reset->setButtonText ("Pad " + juce::String (i + 1) + ": Reset to default");
-            reset->setTitle (reset->getButtonText());
-            reset->onClick = [this, i] { onResetClicked (i); };
-            addAndMakeVisible (reset.get());
-            resetButtons[i] = std::move (reset);
-
-            auto chop = std::make_unique<juce::TextButton>();
-            chop->setWantsKeyboardFocus (true);
-            chop->onClick = [this, i] { onChopClicked (i); };
-            addAndMakeVisible (chop.get());
-            chopButtons[i] = std::move (chop);
+            auto pad = std::make_unique<PadButton>();
+            pad->setWantsKeyboardFocus (i == selectedPad());   // the grid is one Tab stop
+            pad->setClickingTogglesState (false);
+            pad->onClick    = [this, i] { selectPad (i, false); processor.auditionPad (i, 0.8f, false); };
+            pad->onFocus    = [this, i] { if (selectedPad() != i) selectPad (i, false); };
+            pad->onKeyFirst = [this] (const juce::KeyPress& k) { return handleModeKey (k); };
+            pad->onArrowKey = [this, i] (const juce::KeyPress& k) { return handleGridArrow (i, k); };
+            addAndMakeVisible (pad.get());
+            padButtons[(std::size_t) i] = std::move (pad);
         }
 
-        // Keep the pad-scoped utility buttons naming the focused pad.
-        if (auto* focusParam = processor.getState().getParameter (param_ids::focusedPad))
-        {
-            focusedPadAttachment = std::make_unique<juce::ParameterAttachment> (
-                *focusParam,
-                [this] (float) { refreshUtilityLabels(); });
-            focusedPadAttachment->sendInitialUpdate();
-        }
+        setupLabel (padActionsLabel, "Selected pad", 14.0f, true);
+        addButton (loadButton,     [this] { loadSample(); },
+                   "Choose sample files for the selected pad. Choosing several offers one per pad, "
+                   "round-robin layers or velocity layers. Files can also be dropped on a pad, or pasted "
+                   "with Control V after copying them in Explorer.");
+        addButton (prevButton,     [this] { browse (-1); },
+                   "Load and play the previous audio file in the same folder.");
+        addButton (nextButton,     [this] { browse (+1); },
+                   "Load and play the next audio file in the same folder.");
+        addButton (tryPrevButton,  [this] { trySample (-1); },
+                   "Play the previous file in the folder on this pad, without replacing its sample.");
+        addButton (tryNextButton,  [this] { trySample (+1); },
+                   "Play the next file in the folder on this pad, without replacing its sample. "
+                   "Enter keeps the one you are trying, Escape goes back.");
+        addButton (keepTryButton,  [this] { keepTriedSample(); },
+                   "Keep the sample being tried on this pad.");
+        addButton (playButton,     [this] { playSelected(); });
+        addButton (editStartButton, [this] { editSlicePoint (false); },
+                   "Place Start by ear. Left and Right move 10 milliseconds, with Control 1, with Shift 100, "
+                   "and play from the new point. Enter keeps it, Escape restores it.");
+        addButton (editEndButton,   [this] { editSlicePoint (true); },
+                   "Place End by ear. Each step plays the sound leading up to the end backwards. "
+                   "Enter keeps it, Escape restores it.");
+        addButton (trimButton,     [this] { trimSelected(); },
+                   "Move Start past leading silence and End to where the sound dies away. Undo restores them.");
+        addButton (describeButton, [this] { describeSelected(); },
+                   "Speak the sample's length, level, hits, and tempo, key or pitch where it has one.");
+        addButton (renameButton,   [this] { renameSelected(); },
+                   "Give the pad a name, spoken with it and saved with the project and kits.");
+        addButton (noteLearnButton, [this] { showNoteLearnMenu(); },
+                   "Set the pad's note, or the low or high note of its range, by playing it on a MIDI keyboard.");
+        addButton (applyButton,    [this] { showApplyMenu(); },
+                   "Copy one setting, or a whole section, from this pad to all pads or to this bank.");
+        addButton (resetButton,    [this] { resetSelected(); },
+                   "Put the built-in tone back on the selected pad. Undo restores it.");
+        addButton (chopButton,     [this] { chopSelected(); },
+                   "Slice the selected pad's sample across the first pads. Undo restores them.");
+        addButton (copyButton,     [this] { copySelected(); });
+        addButton (pasteButton,    [this] { pasteSelected(); });
+        addButton (normaliseButton, [this] { normaliseSelected(); },
+                   "Set the layer gain so its peak sits at -1 dB. The audio itself is not changed.");
+        addButton (spreadButton,    [this] { spreadSelected(); },
+                   "Share the velocity range out evenly between the pad's loaded layers, layer 1 softest.");
+        addButton (snapButton,     [this] { snapSelected(); },
+                   "Move start and end onto the nearest detected hits.");
+        addButton (bounceButton,   [this] { bounceSelected(); },
+                   "Render the pad with its envelope, filter and character to a new sample on the next empty pad.");
+        addButton (grabButton,     [this] { grabReaperItem(); },
+                   "Render the one selected REAPER item, as you hear it, onto this pad. REAPER's project is left as it was.");
+        addButton (renderStretchButton,  [this] { renderStretchSelected(); },
+                   "Apply time-stretch and formant settings now instead of waiting for the background render.");
+        addButton (renderFormantsButton, [this] { renderFormantsSelected(); },
+                   "Build the per-note formant correction now.");
 
-        // Refresh chop-button labels whenever the host's Chop Count value moves.
-        // Falling back gracefully if the parameter can't be resolved keeps the
-        // editor functional in tests that mock the processor.
-        if (auto* chopParam = processor.getState().getParameter (param_ids::chopCount))
-        {
-            chopCountAttachment = std::make_unique<juce::ParameterAttachment> (
-                *chopParam,
-                [this] (float) { refreshPadButtonLabels(); });
-            chopCountAttachment->sendInitialUpdate();
-        }
+        setupLabel (kitLabel, "Kit", 14.0f, true);
+        addButton (undoButton,       [this] { processor.undoLastAction(); });
+        addButton (redoButton,       [this] { processor.redoLastAction(); });
+        addButton (saveKitButton,    [this] { saveKit(); },
+                   "Save the kit: with sample paths, with copies of the samples beside it, or as a "
+                   "template of settings only.");
+        addButton (loadKitButton,    [this] { loadKit(); });
+        addButton (factoryKitButton, [this] { chooseFactoryKit(); },
+                   "Load a built-in starting point. Changes settings only, not samples.");
+        addButton (relinkButton,     [this] { relink(); },
+                   "Search a folder for samples this project could not find.");
+        addButton (clearAllButton,   [this] { clearAll(); },
+                   "Reset every pad to the default sample. Undo restores them.");
+        addButton (exportMidiButton, [this] { exportMidi(); },
+                   "Write a MIDI file with one note per slice, to import into your project.");
+        addButton (helpButton,       [this] { showHelp(); });
 
-        // Same for Edit Layer — moving it must refresh the per-pad Load labels
-        // so the screen reader speaks the sample currently on the active layer.
-        if (auto* layerParam = processor.getState().getParameter (param_ids::editLayer))
-        {
-            editLayerAttachment = std::make_unique<juce::ParameterAttachment> (
-                *layerParam,
-                [this] (float) { refreshPadButtonLabels(); });
-            editLayerAttachment->sendInitialUpdate();
-        }
-
-        statusLabel.setText ("Ready. Tab to a pad to load a sample, "
-                             "or press Z X C V / A S D F / Q W E R / 1 2 3 4 to audition pads 1 to 16.",
-                             juce::dontSendNotification);
-        statusLabel.setFont (juce::Font (juce::FontOptions (14.0f)));
-        statusLabel.setJustificationType (juce::Justification::centredLeft);
-        statusLabel.setAccessible (true);
+        setupLabel (statusLabel, "Ready. Press F1 for keyboard help.", 14.0f, false);
         statusLabel.setTitle ("Status");
-        addAndMakeVisible (statusLabel);
+        statusLabel.setJustificationType (juce::Justification::topLeft);
+        statusLabel.setMinimumHorizontalScale (1.0f);
 
-        refreshVocalLabels();
-        refreshUtilityLabels();
-        refreshPadButtonLabels();
-        refreshStatusLabel();
-
+        refreshLabels();
         processor.addChangeListener (this);
 
-        const int rowsHeight  = (kRowHeight + kRowSpacing) * kNumPads;
-        // Vocal block: a label row + an editor/buttons row, each with trailing spacing.
-        const int vocalHeight = (kRowHeight + kRowSpacing) * 2;
-        // Utility block: a label row + two rows of buttons.
-        const int utilityHeight = (kRowHeight + kRowSpacing) * 3;
+        // Labels follow parameter changes made anywhere (host list,
+        // automation, undo), so they are polled rather than wired to each of
+        // the ~2,900 parameters.
+        startTimer (250);
 
-        const int contentWidth = kLoadButtonWidth + kButtonGap + kAuditionButtonWidth
-                               + kButtonGap + kResetButtonWidth + kButtonGap
-                               + kChopButtonWidth;
+        const int width = kPadding * 2 + kColumns * kPadWidth + (kColumns - 1) * kGap;
+        const int buttonsPerRow = (width - 2 * kPadding + kGap) / (kButtonWidth + kGap);
+        const int padActionRows = (25 + buttonsPerRow - 1) / buttonsPerRow;
+        const int kitRows       = (9 + buttonsPerRow - 1) / buttonsPerRow;
 
-        setSize (contentWidth + 2 * kPadding,
-                 kPadding + kHeadingHeight + kRowSpacing + vocalHeight + utilityHeight
-                     + rowsHeight + kStatusHeight + kPadding);
+        setSize (width,
+                 kPadding + kHeadingHeight + kGap
+                   + kLabelHeight + kGap + 4 * kPadHeight + 3 * kGap + kGap
+                   + kLabelHeight + padActionRows * (kRowHeight + kGap)
+                   + kLabelHeight + kitRows * (kRowHeight + kGap)
+                   + kStatusHeight + kPadding);
+    }
+
+    ASamplerEditor::~ASamplerEditor()
+    {
+        // Nothing may stay hanging on a held key once the window is gone.
+        for (const auto& [code, note] : heldPadKeys)
+            processor.queueLiveNote (note, false);
+        processor.removeChangeListener (this);
     }
 
     juce::TextButton& ASamplerEditor::addButton (std::unique_ptr<juce::TextButton>& slot,
-                                                 const juce::String& text,
                                                  std::function<void()> onClick,
                                                  const juce::String& description)
     {
         slot = std::make_unique<juce::TextButton>();
         slot->setWantsKeyboardFocus (true);
-        slot->setButtonText (text);
-        // The accessible title takes precedence over the visible text for
-        // screen readers, so the two must always be set together.
-        slot->setTitle (text);
         if (description.isNotEmpty())
             slot->setDescription (description);
         slot->onClick = std::move (onClick);
@@ -228,10 +242,7 @@ namespace asampler
         return *slot;
     }
 
-    ASamplerEditor::~ASamplerEditor()
-    {
-        processor.removeChangeListener (this);
-    }
+    // ---- Layout -------------------------------------------------------------
 
     void ASamplerEditor::paint (juce::Graphics& g)
     {
@@ -243,173 +254,768 @@ namespace asampler
         auto area = getLocalBounds().reduced (kPadding);
 
         heading.setBounds (area.removeFromTop (kHeadingHeight));
-        area.removeFromTop (kRowSpacing);
+        area.removeFromTop (kGap);
 
-        // Vocal generator: label row, then [ text editor | 3 buttons ] row.
-        vocalLabel.setBounds (area.removeFromTop (kRowHeight));
-        area.removeFromTop (kRowSpacing);
         {
-            auto vrow = area.removeFromTop (kRowHeight);
-            const int vbw = 150;   // vocal button width
-            vocalSpreadButton.setBounds (vrow.removeFromRight (vbw));
-            vrow.removeFromRight (kButtonGap);
-            vocalChopButton.setBounds (vrow.removeFromRight (vbw));
-            vrow.removeFromRight (kButtonGap);
-            vocalSpeakButton.setBounds (vrow.removeFromRight (vbw));
-            vrow.removeFromRight (kButtonGap);
-            vocalEditor.setBounds (vrow);   // remaining width on the left
+            auto line = area.removeFromTop (kLabelHeight);
+            bankButton->setBounds (line.removeFromRight (kButtonWidth));
+            gridLabel.setBounds (line);
         }
-        area.removeFromTop (kRowSpacing);
+        area.removeFromTop (kGap);
 
-        // Kit / utility: label row, then the buttons flowed across two rows.
-        utilityLabel.setBounds (area.removeFromTop (kRowHeight));
-        area.removeFromTop (kRowSpacing);
+        // Pad 1 bottom left, Pad 16 top right, like the hardware. Both banks
+        // share the same 16 positions; only the current bank is visible.
+        for (int row = 0; row < 4; ++row)
         {
-            juce::TextButton* utils[] = {
-                undoButton.get(), redoButton.get(), saveKitButton.get(),
-                loadKitButton.get(), factoryKitButton.get(), relinkButton.get(),
-                copyPadButton.get(), pastePadButton.get(), clearAllButton.get(),
-                exportMidiButton.get(), normaliseButton.get(),
-                snapTransientsButton.get(), renderStretchButton.get(),
-                renderFormantsButton.get()
-            };
-
-            auto row = area.removeFromTop (kRowHeight);
-            for (auto* b : utils)
+            auto line = area.removeFromTop (kPadHeight);
+            const int rowOfFour = 3 - row;
+            for (int col = 0; col < kColumns; ++col)
             {
-                if (b == nullptr) continue;
+                const auto bounds = line.removeFromLeft (kPadWidth);
+                for (int bank = 0; bank * kPadsPerBank < kNumPads; ++bank)
+                    padButtons[(std::size_t) (bank * kPadsPerBank + rowOfFour * 4 + col)]->setBounds (bounds);
+                line.removeFromLeft (kGap);
+            }
+            area.removeFromTop (kGap);
+        }
+        area.removeFromTop (kGap);
 
-                if (row.getWidth() < kUtilityButtonWidth)
+        auto flow = [&area] (juce::Label& label, std::initializer_list<juce::TextButton*> buttons)
+        {
+            label.setBounds (area.removeFromTop (kLabelHeight));
+            auto row = area.removeFromTop (kRowHeight);
+            for (auto* b : buttons)
+            {
+                if (row.getWidth() < kButtonWidth)
                 {
-                    area.removeFromTop (kRowSpacing);
+                    area.removeFromTop (kGap);
                     row = area.removeFromTop (kRowHeight);
                 }
-                b->setBounds (row.removeFromLeft (kUtilityButtonWidth));
-                row.removeFromLeft (kButtonGap);
+                b->setBounds (row.removeFromLeft (kButtonWidth));
+                row.removeFromLeft (kGap);
             }
-            area.removeFromTop (kRowSpacing);
-        }
+            area.removeFromTop (kGap);
+        };
 
-        for (int i = 0; i < kNumPads; ++i)
-        {
-            auto row = area.removeFromTop (kRowHeight);
-            loadButtons[i]    ->setBounds (row.removeFromLeft (kLoadButtonWidth));
-            row.removeFromLeft (kButtonGap);
-            auditionButtons[i]->setBounds (row.removeFromLeft (kAuditionButtonWidth));
-            row.removeFromLeft (kButtonGap);
-            resetButtons[i]   ->setBounds (row.removeFromLeft (kResetButtonWidth));
-            row.removeFromLeft (kButtonGap);
-            chopButtons[i]    ->setBounds (row.removeFromLeft (kChopButtonWidth));
-            area.removeFromTop (kRowSpacing);
-        }
+        flow (padActionsLabel, { loadButton.get(), prevButton.get(), nextButton.get(),
+                                 tryPrevButton.get(), tryNextButton.get(), keepTryButton.get(), playButton.get(),
+                                 editStartButton.get(), editEndButton.get(), trimButton.get(),
+                                 describeButton.get(), renameButton.get(), noteLearnButton.get(), applyButton.get(),
+                                 resetButton.get(), chopButton.get(), copyButton.get(), pasteButton.get(),
+                                 normaliseButton.get(), spreadButton.get(), snapButton.get(), bounceButton.get(),
+                                 grabButton.get(), renderStretchButton.get(), renderFormantsButton.get() });
+
+        flow (kitLabel, { undoButton.get(), redoButton.get(), saveKitButton.get(), loadKitButton.get(),
+                          factoryKitButton.get(), relinkButton.get(), clearAllButton.get(),
+                          exportMidiButton.get(), helpButton.get() });
 
         statusLabel.setBounds (area.removeFromTop (kStatusHeight));
     }
 
+    void ASamplerEditor::visibilityChanged()
+    {
+        // Create the announcement window once we are on screen, a moment ahead
+        // of the first announcement, so the screen reader has already seen it.
+        if (! isShowing())
+        {
+            for (const auto& [code, note] : heldPadKeys)
+                processor.queueLiveNote (note, false);
+            heldPadKeys.clear();
+        }
+
+        if (isShowing())
+        {
+            juce::Component::SafePointer<ASamplerEditor> safe (this);
+            juce::Timer::callAfterDelay (300, [safe]
+            {
+                if (safe != nullptr)
+                    safe->announcer.prepare();
+            });
+        }
+    }
+
+    void ASamplerEditor::timerCallback()
+    {
+        refreshLabels();
+    }
+
     void ASamplerEditor::changeListenerCallback (juce::ChangeBroadcaster*)
     {
-        refreshUtilityLabels();
-        refreshPadButtonLabels();
+        refreshLabels();
         refreshStatusLabel();
         announce (processor.getLastStatusMessage());
     }
 
-    void ASamplerEditor::onLoadClicked (int padIndex)
+    // ---- Pad grid -----------------------------------------------------------
+
+    void ASamplerEditor::selectPad (int padIndex, bool moveFocus)
     {
-        const int  padNumber = padIndex + 1;
-        const auto title     = "Choose a sample for Pad " + juce::String (padNumber);
+        if (! juce::isPositiveAndBelow (padIndex, kNumPads))
+            return;
+
+        processor.setFocusedPad (padIndex);
+
+        // Labels first: they show the selected pad's bank, and a hidden
+        // button cannot take focus.
+        refreshLabels();
+
+        auto& target = *padButtons[(std::size_t) padIndex];
+        target.setWantsKeyboardFocus (true);
+        if (moveFocus)
+            target.grabKeyboardFocus();
+
+        // Only the selected pad stays in the Tab order.
+        for (int i = 0; i < kNumPads; ++i)
+            if (i != padIndex)
+                padButtons[(std::size_t) i]->setWantsKeyboardFocus (false);
+    }
+
+    bool ASamplerEditor::handleGridArrow (int padIndex, const juce::KeyPress& key)
+    {
+        if (key.getModifiers().isAnyModifierKeyDown())
+            return false;
+
+        const int col = padIndex % kColumns;
+        int next = -1;
+
+        // Up means higher pad numbers: Pad 1 is at the bottom. Up and down run
+        // straight through the banks (up from Pad 13 is Pad 17), so there is
+        // no dead end to discover by bumping into it.
+        if      (key == juce::KeyPress::upKey)    next = padIndex + kColumns < kNumPads ? padIndex + kColumns : -1;
+        else if (key == juce::KeyPress::downKey)  next = padIndex - kColumns >= 0 ? padIndex - kColumns : -1;
+        else if (key == juce::KeyPress::rightKey) next = col < kColumns - 1 ? padIndex + 1 : -1;
+        else if (key == juce::KeyPress::leftKey)  next = col > 0 ? padIndex - 1 : -1;
+        else if (key == juce::KeyPress::homeKey)  next = 0;
+        else if (key == juce::KeyPress::endKey)   next = kNumPads - 1;
+        else if (key == juce::KeyPress::pageUpKey)
+            next = padIndex + kPadsPerBank < kNumPads ? padIndex + kPadsPerBank : -1;
+        else if (key == juce::KeyPress::pageDownKey)
+            next = padIndex - kPadsPerBank >= 0 ? padIndex - kPadsPerBank : -1;
+        else return false;
+
+        // At an edge the key is consumed but nothing moves, as in any grid.
+        if (next >= 0 && next != padIndex)
+            selectPad (next, true);
+        return true;
+    }
+
+    // ---- Keyboard -----------------------------------------------------------
+
+    int ASamplerEditor::padForKey (const juce::KeyPress& key, int bank)
+    {
+        if (key.getModifiers().isAnyModifierKeyDown())
+            return -1;
+
+        const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                if (ch == static_cast<juce::juce_wchar> (kPadKeyRows[row][col]))
+                    return bank * kPadsPerBank + row * 4 + col;
+        return -1;
+    }
+
+    int ASamplerEditor::padForKeyCode (int keyCode, int bank)
+    {
+        // With Shift held the text character is "!" rather than "1", so the
+        // key code is what identifies the key.
+        const auto ch = juce::CharacterFunctions::toLowerCase (static_cast<juce::juce_wchar> (keyCode));
+        for (int row = 0; row < 4; ++row)
+            for (int col = 0; col < 4; ++col)
+                if (ch == static_cast<juce::juce_wchar> (kPadKeyRows[row][col]))
+                    return bank * kPadsPerBank + row * 4 + col;
+        return -1;
+    }
+
+    void ASamplerEditor::switchBank()
+    {
+        // Same position in the other bank, so Pad 5 becomes Pad 21.
+        const int banks = kNumPads / kPadsPerBank;
+        const int next  = ((currentBank() + 1) % banks) * kPadsPerBank + selectedPad() % kPadsPerBank;
+        selectPad (next, true);
+    }
+
+    bool ASamplerEditor::keyPressed (const juce::KeyPress& key)
+    {
+        if (handleModeKey (key))
+            return true;
+
+        const auto mods = key.getModifiers();
+        const auto code = juce::CharacterFunctions::toLowerCase (static_cast<juce::juce_wchar> (key.getKeyCode()));
+
+        if (mods.isCommandDown() && ! mods.isAltDown())
+        {
+            if (code == 'z' && ! mods.isShiftDown()) { processor.undoLastAction(); return true; }
+            if (code == 'y' || (code == 'z' && mods.isShiftDown())) { processor.redoLastAction(); return true; }
+
+            if (! mods.isShiftDown())
+            {
+                // Ctrl + digits picks a pad by number; it is selected when
+                // Ctrl is let go, so "1" then "2" reaches Pad 12.
+                if (code >= '0' && code <= '9')
+                {
+                    jumpDigits << juce::String::charToString (code);
+                    return true;
+                }
+
+                switch (code)
+                {
+                    case 's': saveKit();                       return true;
+                    case 'o': loadKit();                       return true;
+                    case 'v': pasteFiles();                    return true;
+                    case 'r': processor.toggleReaperRecord();  return true;
+                    case 'g': grabReaperItem();                return true;
+                    default: break;
+                }
+            }
+            return false;   // leave other shortcuts to the host
+        }
+
+        if (key == juce::KeyPress::F1Key) { showHelp(); return true; }
+        if (key == juce::KeyPress::F2Key) { renameSelected(); return true; }
+
+        if (mods.isShiftDown() && ! mods.isCommandDown() && ! mods.isAltDown())
+        {
+            if (code == 'n') { trySample (+1); return true; }
+            if (code == 'p') { trySample (-1); return true; }
+
+            // Shift + a pad key says what the pad holds, without playing it.
+            if (const int pad = padForKeyCode (key.getKeyCode(), currentBank()); pad >= 0)
+            {
+                speakPad (pad);
+                return true;
+            }
+        }
+
+        if (! mods.isAnyModifierKeyDown())
+        {
+            switch (juce::CharacterFunctions::toLowerCase (key.getTextCharacter()))
+            {
+                case 'l': loadSample();             return true;
+                case 'n': browse (+1);              return true;
+                case 'p': browse (-1);              return true;
+                case 'i': describeSelected();       return true;
+                case 'b': bounceSelected();         return true;
+                case 't': editSlicePoint (false);   return true;
+                case 'o': editSlicePoint (true);    return true;
+                case 'k': processor.armNoteLearn (selectedPad(), ASamplerProcessor::NoteLearnTarget::Note);
+                          return true;
+                default: break;
+            }
+
+            if (key == juce::KeyPress::spaceKey) { playSelected(); return true; }
+        }
+
+        if (! mods.isAnyModifierKeyDown()
+            && (key == juce::KeyPress::pageUpKey || key == juce::KeyPress::pageDownKey))
+        {
+            // From anywhere in the editor, not only the grid.
+            const int target = selectedPad() + (key == juce::KeyPress::pageUpKey ? kPadsPerBank : -kPadsPerBank);
+            if (juce::isPositiveAndBelow (target, kNumPads))
+                selectPad (target, true);
+            return true;
+        }
+
+        const int pad = padForKey (key, currentBank());
+        if (pad < 0)
+            return false;   // not ours: let the host have it
+
+        // Held keys play like a keyboard: note-on now, note-off on release
+        // (keyStateChanged). Auto-repeat is ignored, so holding a key doesn't
+        // machine-gun the pad.
+        const int keyCode = key.getKeyCode();
+        if (heldPadKeys.count (keyCode) == 0)
+        {
+            const int note = processor.getPadPlayNote (pad);
+            heldPadKeys[keyCode] = note;
+            processor.queueLiveNote (note, true);
+        }
+        return true;
+    }
+
+    bool ASamplerEditor::keyStateChanged (bool isKeyDown)
+    {
+        juce::ignoreUnused (isKeyDown);
+        for (auto it = heldPadKeys.begin(); it != heldPadKeys.end();)
+        {
+            if (! juce::KeyPress::isKeyCurrentlyDown (it->first))
+            {
+                processor.queueLiveNote (it->second, false);
+                it = heldPadKeys.erase (it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        return false;   // the host may track keys too
+    }
+
+    void ASamplerEditor::modifierKeysChanged (const juce::ModifierKeys& mods)
+    {
+        if (! mods.isCommandDown() && jumpDigits.isNotEmpty())
+        {
+            const int number = jumpDigits.getIntValue();
+            jumpDigits.clear();
+            if (number >= 1 && number <= kNumPads)
+            {
+                selectPad (number - 1, true);
+                lastAnnounced.clear();
+                announce (padTitle (number - 1));
+            }
+            else
+            {
+                announce ("No pad " + juce::String (number) + ", there are " + juce::String (kNumPads));
+            }
+        }
+        juce::AudioProcessorEditor::modifierKeysChanged (mods);
+    }
+
+    // ---- Edit modes -----------------------------------------------------------
+
+    bool ASamplerEditor::handleModeKey (const juce::KeyPress& key)
+    {
+        if (key == juce::KeyPress::escapeKey && processor.isNoteLearnArmed())
+        {
+            processor.cancelNoteLearn();
+            return true;
+        }
+
+        if (mode == Mode::TrySample)
+        {
+            if (key == juce::KeyPress::returnKey)  { keepTriedSample(); return true; }
+            if (key == juce::KeyPress::escapeKey)
+            {
+                processor.cancelPreview (modePad);
+                leaveMode();
+                return true;
+            }
+            return false;
+        }
+
+        if (mode != Mode::EditStart && mode != Mode::EditEnd)
+            return false;
+
+        const bool isEnd = mode == Mode::EditEnd;
+        const auto what  = juce::String (isEnd ? "End" : "Start");
+
+        if (key == juce::KeyPress::returnKey)
+        {
+            processor.stopPreview();
+            processor.setSlicePoint (modePad, isEnd, scrubValue);   // announces
+            leaveMode();
+            return true;
+        }
+
+        if (key == juce::KeyPress::escapeKey)
+        {
+            processor.stopPreview();
+            const float original = processor.getSlicePoint (modePad, isEnd);
+            leaveMode();
+            lastAnnounced.clear();
+            announce (what + " unchanged, " + slicePointText (processor, modePad, isEnd, original));
+            return true;
+        }
+
+        if (key == juce::KeyPress::spaceKey)
+        {
+            processor.previewSlicePoint (modePad, isEnd, scrubValue);
+            return true;
+        }
+
+        const auto mods = key.getModifiers();
+        const int  kc   = key.getKeyCode();
+        float next = scrubValue;
+
+        if (kc == juce::KeyPress::leftKey || kc == juce::KeyPress::rightKey
+            || kc == juce::KeyPress::downKey || kc == juce::KeyPress::upKey)
+        {
+            const double ms = mods.isCommandDown() ? 1.0 : (mods.isShiftDown() ? 100.0 : 10.0);
+            const double seconds = processor.getPadReferenceSeconds (modePad);
+            const float  step = seconds > 0.0 ? (float) (ms * 0.001 / seconds) : 0.01f;
+            const bool   forward = kc == juce::KeyPress::rightKey || kc == juce::KeyPress::upKey;
+            next = juce::jlimit (0.0f, 1.0f, scrubValue + (forward ? step : -step));
+        }
+        else if (kc == juce::KeyPress::homeKey) next = 0.0f;
+        else if (kc == juce::KeyPress::endKey)  next = 1.0f;
+        else
+            return false;
+
+        scrubValue = next;
+        processor.previewSlicePoint (modePad, isEnd, scrubValue);
+        lastAnnounced.clear();
+        announce (slicePointText (processor, modePad, isEnd, scrubValue));
+        return true;
+    }
+
+    void ASamplerEditor::leaveMode()
+    {
+        mode = Mode::Normal;
+        refreshLabels();
+    }
+
+    void ASamplerEditor::editSlicePoint (bool isEnd)
+    {
+        const auto wanted = isEnd ? Mode::EditEnd : Mode::EditStart;
+        if (mode == wanted)
+        {
+            // The button again (or T / O again) keeps the point, like Enter.
+            handleModeKey (juce::KeyPress (juce::KeyPress::returnKey));
+            return;
+        }
+
+        if (mode == Mode::TrySample)
+            processor.cancelPreview (modePad);
+
+        mode       = wanted;
+        modePad    = selectedPad();
+        scrubValue = processor.getSlicePoint (modePad, isEnd);
+        processor.previewSlicePoint (modePad, isEnd, scrubValue);
+        refreshLabels();
+
+        lastAnnounced.clear();
+        announce ("Editing " + juce::String (isEnd ? "End" : "Start") + " of Pad " + juce::String (modePad + 1)
+                  + ", " + slicePointText (processor, modePad, isEnd, scrubValue)
+                  + ". Left and Right move 10 milliseconds, with Control 1, with Shift 100. "
+                    "Enter keeps, Escape restores.");
+    }
+
+    void ASamplerEditor::trySample (int direction)
+    {
+        if (mode == Mode::EditStart || mode == Mode::EditEnd)
+        {
+            processor.stopPreview();
+            mode = Mode::Normal;
+        }
+
+        const int pad = selectedPad();
+        if (mode == Mode::TrySample && modePad != pad)
+            processor.cancelPreview (modePad);
+
+        const auto result = processor.previewSample (pad, direction);
+        if (result == ASamplerProcessor::BrowseResult::Started
+            || result == ASamplerProcessor::BrowseResult::Success)
+        {
+            mode    = Mode::TrySample;
+            modePad = pad;
+        }
+        refreshLabels();
+    }
+
+    void ASamplerEditor::keepTriedSample()
+    {
+        processor.keepPreview (mode == Mode::TrySample ? modePad : selectedPad());
+        leaveMode();
+    }
+
+    // ---- Pad actions ----------------------------------------------------------
+
+    void ASamplerEditor::loadFiles (int padIndex, const juce::Array<juce::File>& filesIn, int forcedMode)
+    {
+        juce::Array<juce::File> files;
+        for (const auto& f : filesIn)
+            if (f.existsAsFile() && isAudioFile (f))
+                files.add (f);
+
+        if (files.isEmpty())
+        {
+            announce ("No audio files to load");
+            return;
+        }
+
+        if (files.size() == 1)
+        {
+            processor.loadSampleForPadLayerAsync (padIndex, processor.getCurrentEditLayer(), files[0]);
+            return;
+        }
+
+        using M = ASamplerProcessor::MultiLoadMode;
+        if (forcedMode >= 0)
+        {
+            processor.loadSamples (padIndex, files, static_cast<M> (forcedMode));
+            return;
+        }
+
+        // Several files: say where each choice puts them before anything is
+        // overwritten.
+        const int n = files.size();
+        const int lastPad = juce::jmin (kNumPads, padIndex + n);
+        const auto layers = n > kNumLayers ? " (the first " + juce::String (kNumLayers) + ")" : juce::String();
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Load " + juce::String (n) + " files");
+        menu.addItem (1, "One per pad, replacing Pads " + juce::String (padIndex + 1) + " to " + juce::String (lastPad));
+        menu.addItem (2, "Round-robin layers on Pad " + juce::String (padIndex + 1) + layers);
+        menu.addItem (3, "Velocity layers on Pad " + juce::String (padIndex + 1) + ", softest first" + layers);
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (padButtons[(std::size_t) padIndex].get()),
+            [safe, padIndex, files] (int result)
+            {
+                if (safe == nullptr) return;
+                if (result <= 0) { safe->announce ("Load cancelled"); return; }
+                safe->processor.loadSamples (padIndex, files, static_cast<M> (result - 1));
+            });
+    }
+
+    bool ASamplerEditor::isInterestedInFileDrag (const juce::StringArray& files)
+    {
+        for (const auto& f : files)
+            if (isAudioFile (juce::File (f)))
+                return true;
+        return false;
+    }
+
+    void ASamplerEditor::filesDropped (const juce::StringArray& paths, int x, int y)
+    {
+        // Onto the pad under the drop, else the selected pad.
+        int pad = selectedPad();
+        for (int i = 0; i < kNumPads; ++i)
+            if (padButtons[(std::size_t) i]->isVisible() && padButtons[(std::size_t) i]->getBounds().contains (x, y))
+                pad = i;
+
+        selectPad (pad, false);
+        juce::Array<juce::File> files;
+        for (const auto& p : paths)
+            files.add (juce::File (p));
+        loadFiles (pad, files);
+    }
+
+    void ASamplerEditor::pasteFiles()
+    {
+        const auto files = getFilesFromClipboard();
+        if (files.isEmpty())
+        {
+            announce ("No files on the clipboard. Copy audio files in Explorer first.");
+            return;
+        }
+        loadFiles (selectedPad(), files);
+    }
+
+    void ASamplerEditor::speakPad (int padIndex)
+    {
+        lastAnnounced.clear();
+        announce (padTitle (padIndex));
+    }
+
+    void ASamplerEditor::renameSelected()
+    {
+        const int pad = selectedPad();
+        auto* window = new juce::AlertWindow ("Rename Pad " + juce::String (pad + 1),
+                                              "Name for Pad " + juce::String (pad + 1) + ". Leave it empty to clear the name.",
+                                              juce::MessageBoxIconType::NoIcon, this);
+        window->addTextEditor ("name", processor.getPadName (pad), "Name");
+        window->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        window->enterModalState (true, juce::ModalCallbackFunction::create ([safe, window, pad] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1)
+                safe->processor.setPadName (pad, window->getTextEditorContents ("name"));
+            else
+                safe->announce ("Rename cancelled");
+        }), true);
+
+        if (auto* editor = window->getTextEditor ("name"))
+        {
+            editor->selectAll();
+            editor->grabKeyboardFocus();
+        }
+    }
+
+    void ASamplerEditor::showApplyMenu()
+    {
+        const int pad  = selectedPad();
+        const int bank = currentBank();
+
+        juce::StringArray sections;
+        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+            sections.addIfNotAlreadyThere (ASamplerProcessor::getPadControlSection (i));
+
+        // Ids: scope * 100000, plus 1 + control index, or 50000 + section index.
+        auto scopeMenu = [&] (int scope)
+        {
+            juce::PopupMenu menu;
+            for (int s = 0; s < sections.size(); ++s)
+            {
+                juce::PopupMenu sectionMenu;
+                sectionMenu.addItem (scope * 100000 + 50000 + s, "Whole " + sections[s] + " section");
+                sectionMenu.addSeparator();
+                for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+                    if (ASamplerProcessor::getPadControlSection (i) == sections[s])
+                        sectionMenu.addItem (scope * 100000 + 1 + i, ASamplerProcessor::getPadControlName (i) + ": "
+                                                                 + processor.getPadControlValueText (pad, i));
+                menu.addSubMenu (sections[s], sectionMenu);
+            }
+            return menu;
+        };
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Apply Pad " + juce::String (pad + 1) + " settings");
+        menu.addSubMenu ("To all " + juce::String (kNumPads) + " pads", scopeMenu (0));
+        menu.addSubMenu ("To this bank, pads " + bankRange (bank), scopeMenu (1));
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (applyButton.get()),
+            [safe, pad, bank, sections] (int result)
+            {
+                if (safe == nullptr || result <= 0) return;
+                const int scope = result / 100000;
+                const int item  = result % 100000;
+                const int first = scope == 0 ? 0 : bank * kPadsPerBank;
+                const int last  = scope == 0 ? kNumPads - 1 : first + kPadsPerBank - 1;
+                if (item >= 50000)
+                    safe->processor.applySectionToPads (pad, sections[item - 50000], first, last);
+                else
+                    safe->processor.applyControlToPads (pad, item - 1, first, last);
+            });
+    }
+
+    void ASamplerEditor::showNoteLearnMenu()
+    {
+        const int pad = selectedPad();
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Learn from the next MIDI note");
+        menu.addItem (1, "Note (the root in Keyboard mode) (K)");
+        menu.addItem (2, "Low Note");
+        menu.addItem (3, "High Note");
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (noteLearnButton.get()),
+            [safe, pad] (int result)
+            {
+                if (safe == nullptr || result <= 0) return;
+                safe->processor.armNoteLearn (pad, static_cast<ASamplerProcessor::NoteLearnTarget> (result - 1));
+            });
+    }
+
+    void ASamplerEditor::trimSelected()    { processor.trimSilence (selectedPad()); }
+    void ASamplerEditor::spreadSelected()  { processor.spreadVelocityLayers (selectedPad()); }
+    void ASamplerEditor::grabReaperItem()  { processor.grabReaperItem (selectedPad()); }
+
+    void ASamplerEditor::loadSample()
+    {
+        const int pad = selectedPad();
+
+        // Start in the folder of the pad's current sample, if it has one, so
+        // swapping a kick for its neighbour is one step.
+        auto start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+        if (const auto current = processor.getPadSampleFile (pad); current.getParentDirectory().isDirectory())
+            start = current;
 
         fileChooser = std::make_unique<juce::FileChooser> (
-            title,
-            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+            "Choose samples for Pad " + juce::String (pad + 1), start,
             "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
 
-        const auto flags = juce::FileBrowserComponent::openMode
-                         | juce::FileBrowserComponent::canSelectFiles;
-
-        fileChooser->launchAsync (flags,
-            [this, padIndex] (const juce::FileChooser& fc)
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::canSelectMultipleItems,
+            [this, pad] (const juce::FileChooser& fc)
             {
-                const auto file = fc.getResult();
-                if (file == juce::File{})
-                    return;   // user cancelled — no announcement needed
-
-                // Async so a long file never freezes the host. The processor
-                // announces both "Loading..." and the result.
-                processor.loadSampleForPadLayerAsync (
-                    padIndex, processor.getCurrentEditLayer(), file);
+                const auto files = fc.getResults();
+                if (files.isEmpty())
+                    return;   // cancelled: nothing to announce
+                loadFiles (pad, files);
             });
     }
 
-    void ASamplerEditor::onAuditionClicked (int padIndex)
+    void ASamplerEditor::browse (int direction)    { processor.browseSample (selectedPad(), direction); }
+    void ASamplerEditor::playSelected()            { processor.auditionPad (selectedPad(), 0.8f, false); }
+    void ASamplerEditor::describeSelected()        { processor.describePad (selectedPad()); }
+    void ASamplerEditor::resetSelected()           { processor.resetPadToDefault (selectedPad()); }
+    void ASamplerEditor::chopSelected()            { processor.chopAcrossPads (selectedPad()); }
+    void ASamplerEditor::copySelected()            { processor.copyPad (selectedPad()); }
+    void ASamplerEditor::pasteSelected()           { processor.pastePad (selectedPad(), true); }
+    void ASamplerEditor::snapSelected()            { processor.snapPadWindowToTransients (selectedPad()); }
+    void ASamplerEditor::bounceSelected()          { processor.bouncePad (selectedPad()); }
+
+    void ASamplerEditor::normaliseSelected()
     {
-        processor.auditionPad (padIndex);
+        processor.normaliseLayer (selectedPad(), processor.getCurrentEditLayer());
     }
 
-    void ASamplerEditor::onResetClicked (int padIndex)
+    void ASamplerEditor::renderStretchSelected()
     {
-        processor.resetPadToDefault (padIndex);
+        const int pad = selectedPad();
+        announce ("Rendering Pad " + juce::String (pad + 1) + "...");
+        processor.renderStretchNow (pad);
+        announce ("Pad " + juce::String (pad + 1)
+                  + (processor.isPadRendered (pad) ? " rendered with stretch and formant settings."
+                                                   : " has no stretch or formant settings to apply."));
     }
 
-    void ASamplerEditor::onChopClicked (int padIndex)
+    void ASamplerEditor::renderFormantsSelected()
     {
-        processor.chopAcrossPads (padIndex);
-        // The processor sets a status message describing the outcome; the
-        // existing ChangeListener path forwards it to the screen reader.
+        const int pad = selectedPad();
+        announce ("Rendering formant correction for Pad " + juce::String (pad + 1) + "...");
+        processor.renderFormantTableNow (pad);
+
+        const int n = processor.getFormantVariantCount (pad);
+        announce (n > 0 ? "Pad " + juce::String (pad + 1) + " formant correction ready, "
+                              + juce::String (n) + " notes covered."
+                        : "Pad " + juce::String (pad + 1)
+                              + " has no formant correction to build. It needs Keyboard mode "
+                                "and Formant Correct switched on.");
     }
 
-    // ---- Kit / utility actions ----
+    // ---- Kit actions ----------------------------------------------------------
 
-    void ASamplerEditor::onUndoClicked() { processor.undoLastAction(); }
-    void ASamplerEditor::onRedoClicked() { processor.redoLastAction(); }
+    void ASamplerEditor::saveKit()
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Save kit");
+        menu.addItem (1, "Kit with sample paths");
+        menu.addItem (2, "Kit with copies of its samples, in a folder beside it");
+        menu.addItem (3, "Template: settings only, no samples");
 
-    void ASamplerEditor::onSaveKitClicked()
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (saveKitButton.get()),
+            [safe] (int result)
+            {
+                if (safe == nullptr || result <= 0) return;
+                const auto kitMode = static_cast<ASamplerProcessor::KitSaveMode> (result - 1);
+
+                safe->fileChooser = std::make_unique<juce::FileChooser> (
+                    result == 3 ? "Save template as" : "Save kit as",
+                    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                        .getChildFile (result == 3 ? "MyTemplate.asamplerkit" : "MyKit.asamplerkit"),
+                    "*.asamplerkit");
+
+                safe->fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                                    | juce::FileBrowserComponent::canSelectFiles
+                                                    | juce::FileBrowserComponent::warnAboutOverwriting,
+                    [safe, kitMode] (const juce::FileChooser& fc)
+                    {
+                        const auto file = fc.getResult();
+                        if (safe != nullptr && file != juce::File{})
+                            safe->processor.saveKitToFile (file.withFileExtension ("asamplerkit"), kitMode);
+                    });
+            });
+    }
+
+    void ASamplerEditor::loadKit()
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Save kit as",
-            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                .getChildFile ("MyKit.asamplerkit"),
-            "*.asamplerkit");
+            "Load a kit", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.asamplerkit");
 
-        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
-                                      | juce::FileBrowserComponent::canSelectFiles
-                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc)
             {
                 const auto file = fc.getResult();
-                if (file == juce::File{}) return;
-                processor.saveKitToFile (file.withFileExtension ("asamplerkit"));
+                if (file != juce::File{})
+                    processor.loadKitFromFile (file);
             });
     }
 
-    void ASamplerEditor::onLoadKitClicked()
+    void ASamplerEditor::chooseFactoryKit()
     {
-        fileChooser = std::make_unique<juce::FileChooser> (
-            "Load a kit",
-            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
-            "*.asamplerkit");
-
-        fileChooser->launchAsync (juce::FileBrowserComponent::openMode
-                                      | juce::FileBrowserComponent::canSelectFiles,
-            [this] (const juce::FileChooser& fc)
-            {
-                const auto file = fc.getResult();
-                if (file == juce::File{}) return;
-                processor.loadKitFromFile (file);
-            });
-    }
-
-    void ASamplerEditor::onFactoryKitClicked()
-    {
-        // A plain popup menu rather than a custom picker: JUCE's PopupMenu is
-        // keyboard navigable and exposed to UIA as a menu, so it reads properly.
+        // JUCE's PopupMenu is keyboard navigable and exposed to UIA as a menu.
         juce::PopupMenu menu;
         const auto names = ASamplerProcessor::getFactoryKitNames();
         for (int i = 0; i < names.size(); ++i)
             menu.addItem (i + 1, names[i]);
 
-        menu.showMenuAsync (
-            juce::PopupMenu::Options().withTargetComponent (factoryKitButton.get()),
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (factoryKitButton.get()),
             [this] (int result)
             {
                 if (result > 0)
@@ -417,7 +1023,7 @@ namespace asampler
             });
     }
 
-    void ASamplerEditor::onRelinkClicked()
+    void ASamplerEditor::relink()
     {
         const int missing = processor.getMissingSampleCount();
         if (missing == 0)
@@ -430,34 +1036,23 @@ namespace asampler
             "Choose a folder to search for " + juce::String (missing) + " missing samples",
             juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
 
-        fileChooser->launchAsync (juce::FileBrowserComponent::openMode
-                                      | juce::FileBrowserComponent::canSelectDirectories,
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
             [this] (const juce::FileChooser& fc)
             {
                 const auto dir = fc.getResult();
-                if (dir == juce::File{}) return;
-                processor.relinkMissingSamples (dir);
+                if (dir != juce::File{})
+                    processor.relinkMissingSamples (dir);
             });
     }
 
-    void ASamplerEditor::onCopyPadClicked()
-    {
-        processor.copyPad (processor.getCurrentFocusedPad());
-    }
-
-    void ASamplerEditor::onPastePadClicked()
-    {
-        processor.pastePad (processor.getCurrentFocusedPad(), true);
-    }
-
-    void ASamplerEditor::onClearAllClicked()
+    void ASamplerEditor::clearAll()
     {
         // Destructive and wide-reaching, so confirm first. Without sight there
-        // is no way to notice 16 pads emptying by accident.
+        // is no way to notice every pad emptying by accident.
         juce::NativeMessageBox::showOkCancelBox (
             juce::MessageBoxIconType::WarningIcon,
             "Clear all pads",
-            "Reset all 16 pads to the default sample? You can undo this.",
+            "Reset all " + juce::String (kNumPads) + " pads to the default sample? You can undo this.",
             this,
             juce::ModalCallbackFunction::create ([this] (int result)
             {
@@ -468,14 +1063,13 @@ namespace asampler
             }));
     }
 
-    void ASamplerEditor::onExportMidiClicked()
+    void ASamplerEditor::exportMidi()
     {
         const int slices = processor.getCurrentChopCount();
 
         fileChooser = std::make_unique<juce::FileChooser> (
             "Export slice MIDI",
-            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                .getChildFile ("ASampler-slices.mid"),
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("ASampler-slices.mid"),
             "*.mid");
 
         fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
@@ -484,202 +1078,177 @@ namespace asampler
             [this, slices] (const juce::FileChooser& fc)
             {
                 const auto file = fc.getResult();
-                if (file == juce::File{}) return;
-                processor.exportSliceMidi (file.withFileExtension ("mid"), slices);
+                if (file != juce::File{})
+                    processor.exportSliceMidi (file.withFileExtension ("mid"), slices);
             });
     }
 
-    void ASamplerEditor::onNormaliseClicked()
+    juce::String ASamplerEditor::getHelpText()
     {
-        processor.normaliseLayer (processor.getCurrentFocusedPad(),
-                                  processor.getCurrentEditLayer());
+        return "ASampler " + ASamplerProcessor::getVersionString() + " keyboard help. "
+               "Arrow keys move between pads; up is higher pad numbers. "
+               "There are two banks of 16 pads: A is pads 1 to 16, B is pads 17 to 32. "
+               "Page Up and Page Down switch bank. "
+               "Space plays the selected pad. " + kCmd + " and a pad number, then letting go of " + kCmd
+               + ", jumps to that pad. "
+               "L loads samples; choose several to spread them over pads or layers. Audio files can also be "
+               "dropped on a pad, or copied in Explorer and pasted with " + kCmd + " V. "
+               "N and P load the next or previous sample in the same folder. "
+               "Shift N and Shift P try the next or previous sample on the pad without replacing it: "
+               "Enter keeps it, Escape goes back. "
+               "T edits Start and O edits End by ear: Left and Right move 10 milliseconds, with " + kCmd
+               + " 1, with Shift 100, Enter keeps, Escape restores. "
+               "K learns the pad's note from the next MIDI note. F2 renames the pad. "
+               "I describes the sample. B bounces the pad to the next empty pad. "
+               + kCmd + " S saves a kit, " + kCmd + " O opens one. "
+               + kCmd + " Z undoes, " + kCmd + " Y redoes. "
+               "In REAPER, " + kCmd + " R toggles record and " + kCmd + " G grabs the selected item onto the pad. "
+               "Z X C V, A S D F, Q W E R and 1 2 3 4 play the 16 pads of the current bank while held, and "
+               "send the notes to the plugin's MIDI output; with Shift they say what the pad holds. "
+               "Every setting is also a parameter in the host's parameter list; "
+               "the Focus group there follows the selected pad.";
     }
 
-    void ASamplerEditor::onSnapTransientsClicked()
+    void ASamplerEditor::showHelp()
     {
-        processor.snapPadWindowToTransients (processor.getCurrentFocusedPad());
+        // Spoken even if it was the last thing said: asking again means the
+        // user wants to hear it again.
+        lastAnnounced.clear();
+        announce (getHelpText());
     }
 
-    void ASamplerEditor::onRenderFormantsClicked()
+    // ---- Labels ---------------------------------------------------------------
+
+    void ASamplerEditor::refreshLabels()
     {
-        const int pad = processor.getCurrentFocusedPad();
-        announce ("Rendering formant correction for Pad " + juce::String (pad + 1) + "...");
-        processor.renderFormantTableNow (pad);
+        const int sel   = selectedPad();
+        const int bank  = currentBank();
+        const int layer = processor.getCurrentEditLayer();
+        const auto padN = "Pad " + juce::String (sel + 1);
+        const auto layerSuffix = layer > 0 ? ", layer " + juce::String (layer + 1) : juce::String();
 
-        const int n = processor.getFormantVariantCount (pad);
-        announce (n > 0
-                    ? ("Pad " + juce::String (pad + 1) + " formant correction ready, "
-                       + juce::String (n) + " notes covered.")
-                    : ("Pad " + juce::String (pad + 1)
-                       + " has no formant correction to build. It needs Keyboard mode "
-                         "and Formant Correct switched on."));
-    }
-
-    void ASamplerEditor::onRenderStretchClicked()
-    {
-        const int pad = processor.getCurrentFocusedPad();
-        announce ("Rendering Pad " + juce::String (pad + 1) + "...");
-        processor.renderStretchNow (pad);
-        announce ("Pad " + juce::String (pad + 1)
-                  + (processor.isPadRendered (pad)
-                         ? " rendered with stretch and formant settings."
-                         : " has no stretch or formant settings to apply."));
-    }
-
-    // ---- Keyboard pad triggering ----
-
-    int ASamplerEditor::padForKey (const juce::KeyPress& key)
-    {
-        // Ignore modified presses so Ctrl+Z and friends still reach the host.
-        if (key.getModifiers().isAnyModifierKeyDown())
-            return -1;
-
-        const auto ch = juce::CharacterFunctions::toLowerCase (
-            static_cast<juce::juce_wchar> (key.getKeyCode()));
-
-        for (int row = 0; row < 4; ++row)
+        const auto gridText = "Pads, bank " + bankName (bank) + ", pads " + bankRange (bank)
+                            + ". Arrow keys move, Page Up and Page Down switch bank, Space plays.";
+        if (gridLabel.getText() != gridText)
         {
-            const char* keys = kPadKeyRows[row];
-            for (int col = 0; col < 4; ++col)
-                if (ch == static_cast<juce::juce_wchar> (keys[col]))
-                    return row * 4 + col;
+            gridLabel.setText (gridText, juce::dontSendNotification);
+            gridLabel.setTitle (gridText);
         }
-        return -1;
-    }
+        const int otherBank = (bank + 1) % (kNumPads / kPadsPerBank);
+        setButtonLabel (*bankButton, "Bank " + bankName (otherBank) + ", pads " + bankRange (otherBank)
+                                     + " (Page " + juce::String (otherBank > bank ? "Up" : "Down") + ")");
 
-    bool ASamplerEditor::keyPressed (const juce::KeyPress& key)
-    {
-        const int pad = padForKey (key);
-        if (pad < 0)
-            return false;   // not ours — let it propagate
-
-        processor.auditionPad (pad);
-        return true;
-    }
-
-    void ASamplerEditor::onVocalSpeakClicked()
-    {
-        processor.synthesizeVocalForPad (processor.getCurrentVocalTargetPad(),
-                                         vocalEditor.getText());
-        // Status (spoken / failed) is announced via the ChangeListener path.
-    }
-
-    void ASamplerEditor::onVocalChopClicked()
-    {
-        processor.synthesizeVocalAndChop (processor.getCurrentVocalTargetPad(),
-                                          vocalEditor.getText());
-    }
-
-    void ASamplerEditor::onVocalSpreadClicked()
-    {
-        processor.synthesizeVocalAndSpread (processor.getCurrentVocalTargetPad(),
-                                            vocalEditor.getText());
-    }
-
-    void ASamplerEditor::refreshVocalLabels()
-    {
-        const int pad = processor.getCurrentVocalTargetPad() + 1;
-
-        const auto speak  = "Generate vocal to Pad " + juce::String (pad);
-        const auto chop   = "Generate and chop across pads (from Pad " + juce::String (pad) + ")";
-        const auto spread = "Generate and spread across keyboard (Pad " + juce::String (pad) + ")";
-
-        vocalSpeakButton.setButtonText (speak);
-        vocalSpeakButton.setTitle (speak);
-        vocalChopButton.setButtonText (chop);
-        vocalChopButton.setTitle (chop);
-        vocalSpreadButton.setButtonText (spread);
-        vocalSpreadButton.setTitle (spread);
-    }
-
-    void ASamplerEditor::refreshUtilityLabels()
-    {
-        const int pad = processor.getCurrentFocusedPad() + 1;
-
-        // Pad-scoped actions say which pad they will hit. "Paste pad" alone
-        // gives no way to tell where it is about to land.
-        const auto copyText  = "Copy Pad " + juce::String (pad);
-        const auto pasteText = "Paste to Pad " + juce::String (pad);
-        const auto normText  = "Normalise Pad " + juce::String (pad) + " layer";
-        const auto snapText  = "Snap Pad " + juce::String (pad) + " to transients";
-        const auto rendText  = "Render Pad " + juce::String (pad) + " stretch";
-        const auto fcorText  = "Render Pad " + juce::String (pad) + " formants";
-
-        if (copyPadButton  != nullptr) { copyPadButton ->setButtonText (copyText);  copyPadButton ->setTitle (copyText); }
-        if (pastePadButton != nullptr) { pastePadButton->setButtonText (pasteText); pastePadButton->setTitle (pasteText); }
-        if (normaliseButton != nullptr) { normaliseButton->setButtonText (normText); normaliseButton->setTitle (normText); }
-        if (snapTransientsButton != nullptr) { snapTransientsButton->setButtonText (snapText); snapTransientsButton->setTitle (snapText); }
-        if (renderStretchButton != nullptr) { renderStretchButton->setButtonText (rendText); renderStretchButton->setTitle (rendText); }
-        if (renderFormantsButton != nullptr) { renderFormantsButton->setButtonText (fcorText); renderFormantsButton->setTitle (fcorText); }
-
-        // Surface unresolved samples on the Relink button itself, so the user
-        // discovers the problem by tabbing rather than only from a status
-        // message they may have missed.
-        if (relinkButton != nullptr)
+        // A bank change is said once; focus landing on the new pad then
+        // speaks the pad itself.
+        if (bank != lastBank)
         {
-            const int missing = processor.getMissingSampleCount();
-            const auto text = missing > 0
-                                ? ("Relink " + juce::String (missing) + " missing sample"
-                                   + (missing == 1 ? "..." : "s..."))
-                                : juce::String ("Relink samples...");
-            relinkButton->setButtonText (text);
-            relinkButton->setTitle (text);
+            lastBank = bank;
+            announce ("Bank " + bankName (bank) + ", pads " + bankRange (bank));
         }
-    }
-
-    void ASamplerEditor::refreshPadButtonLabels()
-    {
-        const int chopCount   = processor.getCurrentChopCount();
-        const int editLayer   = processor.getCurrentEditLayer();
-        const int focusedPad  = processor.getCurrentFocusedPad();
-        const auto layerName  = "Layer " + juce::String (editLayer + 1);
 
         for (int i = 0; i < kNumPads; ++i)
         {
-            const int defaultNote = 36 + i;  // matches param default (35 + 1-based)
-            const auto noteName   = midiNoteName (defaultNote);
-            const auto sampleName = processor.getPadSampleDisplayName (i);
+            auto& b = *padButtons[(std::size_t) i];
 
-            // Name the QWERTY key that auditions this pad, so the shortcut is
-            // discoverable by tabbing rather than only from documentation.
-            const auto padKey = juce::String::charToString (
-                juce::CharacterFunctions::toUpperCase (
-                    static_cast<juce::juce_wchar> (kPadKeyRows[i / 4][i % 4])));
+            const bool inBank = (i / kPadsPerBank) == bank;
+            if (b.isVisible() != inBank)
+                b.setVisible (inBank);
 
-            const auto label = "Pad " + juce::String (i + 1)
-                             + (i == focusedPad ? " (focused)" : "")
-                             + " (note " + noteName + ", " + layerName + "): Load sample. Currently: "
-                             + sampleName;
+            // Visible text stays short; the spoken title carries the detail:
+            // what is loaded, which note plays it, and anything that would
+            // make it silent.
+            const auto padName = processor.getPadName (i);
+            const auto title   = padTitle (i);
+            const auto text    = juce::String (i + 1) + "  "
+                               + (padName.isNotEmpty() ? padName : processor.getPadSampleDisplayName (i));
+            if (b.getButtonText() != text) b.setButtonText (text);
+            if (b.getTitle() != title)     b.setTitle (title);
+            b.setToggleState (i == sel, juce::dontSendNotification);
 
-            loadButtons[i]->setButtonText (label);
-            // The accessibility title takes precedence over the visual button
-            // text for screen readers when both are set — keep them in sync.
-            loadButtons[i]->setTitle (label);
-
-            const auto audLabel = "Play Pad " + juce::String (i + 1) + " (key " + padKey + ")";
-            auditionButtons[i]->setButtonText (audLabel);
-            auditionButtons[i]->setTitle (audLabel);
-
-            const auto resetLabel = "Pad " + juce::String (i + 1)
-                                  + " (" + layerName + "): Reset to default";
-            resetButtons[i]->setButtonText (resetLabel);
-            resetButtons[i]->setTitle (resetLabel);
-
-            // Say what chop will overwrite, not just what it will do — it
-            // rewrites the first N pads, which is easy to miss without sight.
-            const auto chopLabel = "Pad " + juce::String (i + 1)
-                                 + ": Chop into " + juce::String (chopCount)
-                                 + " slices, replacing pads 1 to " + juce::String (chopCount);
-            chopButtons[i]->setButtonText (chopLabel);
-            chopButtons[i]->setTitle (chopLabel);
+            // Keep the grid's single Tab stop on the selected pad, including
+            // when the selection was changed from the host's parameter list.
+            const bool shouldFocus = (i == sel);
+            if (b.getWantsKeyboardFocus() != shouldFocus && ! b.hasKeyboardFocus (false))
+                b.setWantsKeyboardFocus (shouldFocus);
         }
+
+        padActionsLabel.setText ("Selected: " + padN + ", " + processor.getPadSampleDisplayName (sel),
+                                 juce::dontSendNotification);
+
+        const bool trying = processor.isPreviewing (sel);
+
+        const int chopCount = processor.getCurrentChopCount();
+        setButtonLabel (*loadButton,     "Load sample into " + padN + layerSuffix + " (L)");
+        setButtonLabel (*prevButton,     "Previous sample (P)");
+        setButtonLabel (*nextButton,     "Next sample (N)");
+        setButtonLabel (*tryPrevButton,  "Try previous sample (Shift+P)");
+        setButtonLabel (*tryNextButton,  "Try next sample (Shift+N)");
+        setButtonLabel (*keepTryButton,  trying ? "Keep " + processor.getPreviewFile (sel).getFileNameWithoutExtension()
+                                                      + " on " + padN + " (Enter)"
+                                                : juce::String ("Keep tried sample (Enter)"));
+        setButtonLabel (*playButton,     "Play " + padN + " (Space)");
+        setButtonLabel (*editStartButton, mode == Mode::EditStart ? "Keep Start of " + padN + " (Enter)"
+                                                                  : "Edit Start of " + padN + " by ear (T)");
+        setButtonLabel (*editEndButton,   mode == Mode::EditEnd ? "Keep End of " + padN + " (Enter)"
+                                                                : "Edit End of " + padN + " by ear (O)");
+        setButtonLabel (*trimButton,     "Trim silence on " + padN);
+        setButtonLabel (*describeButton, "Describe " + padN + " (I)");
+        setButtonLabel (*renameButton,   "Rename " + padN + " (F2)");
+        setButtonLabel (*noteLearnButton, "Learn note for " + padN + "... (K)");
+        setButtonLabel (*applyButton,    "Apply " + padN + " settings to other pads...");
+        setButtonLabel (*resetButton,    "Reset " + padN + layerSuffix);
+        // Say what chop will overwrite, not just what it does.
+        setButtonLabel (*chopButton,     "Chop " + padN + " into " + juce::String (chopCount)
+                                         + ", replacing pads 1 to " + juce::String (chopCount));
+        setButtonLabel (*copyButton,     "Copy " + padN);
+        setButtonLabel (*pasteButton,    "Paste onto " + padN);
+        setButtonLabel (*normaliseButton, "Normalise " + padN + (layer > 0 ? layerSuffix : ", layer 1"));
+        setButtonLabel (*snapButton,     "Snap " + padN + " to transients");
+        setButtonLabel (*spreadButton,   "Spread velocity layers on " + padN);
+        setButtonLabel (*bounceButton,   "Bounce " + padN + " (B)");
+        setButtonLabel (*grabButton,     "Grab REAPER item onto " + padN + " (" + kCmd + "+G)");
+        setButtonLabel (*renderStretchButton,  "Render " + padN + " stretch");
+        setButtonLabel (*renderFormantsButton, "Render " + padN + " formants");
+
+        setButtonLabel (*undoButton,       "Undo (" + kCmd + "+Z)");
+        setButtonLabel (*redoButton,       "Redo (" + kCmd + "+Y)");
+        setButtonLabel (*saveKitButton,    "Save kit... (" + kCmd + "+S)");
+        setButtonLabel (*loadKitButton,    "Load kit... (" + kCmd + "+O)");
+        setButtonLabel (*factoryKitButton, "Factory kit...");
+        setButtonLabel (*clearAllButton,   "Clear all pads...");
+        setButtonLabel (*exportMidiButton, "Export slice MIDI...");
+        setButtonLabel (*helpButton,       "Keyboard help (F1)");
+
+        // Unresolved samples show on the Relink button itself, so the problem
+        // is found by tabbing, not only from a status message.
+        const int missing = processor.getMissingSampleCount();
+        setButtonLabel (*relinkButton, missing > 0
+                                         ? "Relink " + juce::String (missing) + " missing sample"
+                                               + (missing == 1 ? "..." : "s...")
+                                         : juce::String ("Relink samples..."));
+    }
+
+    juce::String ASamplerEditor::padTitle (int i) const
+    {
+        juce::String title = "Pad " + juce::String (i + 1);
+        if (const auto padName = processor.getPadName (i); padName.isNotEmpty())
+            title << ", " << padName;
+        if (processor.isPreviewing (i))
+            title << ", trying " << processor.getPreviewFile (i).getFileName();
+        else
+            title << ", " << processor.getPadSampleDisplayName (i);
+        title << ", " << processor.describePadTrigger (i);
+        if (processor.isPadMuted (i))  title << ", muted";
+        if (processor.isPadSoloed (i)) title << ", soloed";
+        title << ", key " << padKeyName (i);
+        return title;
     }
 
     void ASamplerEditor::refreshStatusLabel()
     {
         const auto msg = processor.getLastStatusMessage();
         if (msg.isNotEmpty())
-            statusLabel.setText ("Status: " + msg, juce::dontSendNotification);
+            statusLabel.setText (msg, juce::dontSendNotification);
     }
 
     void ASamplerEditor::announce (const juce::String& message)
@@ -687,19 +1256,16 @@ namespace asampler
         if (message.isEmpty())
             return;
 
-        // Don't repeat an announcement that is already the most recent thing
-        // said. Bursty actions (chop touches every pad, kit load touches every
-        // parameter) can fire the change listener many times for one logical
-        // event, and a queue of identical speech is something the user has to
-        // sit through before they can do anything else.
+        // Don't repeat what was just said. Bursty actions (a chop touches every
+        // pad, a kit load every parameter) can fire the change listener many
+        // times for one logical event.
         if (message == lastAnnounced)
             return;
         lastAnnounced = message;
 
-        // Failures and warnings interrupt; routine confirmations wait their
-        // turn. Getting this wrong in either direction is bad: high priority
-        // everywhere talks over the user, low priority everywhere means an
-        // error scrolls past unheard.
+        // Failures interrupt; routine confirmations wait their turn. High
+        // priority everywhere talks over the user; low priority everywhere
+        // lets an error scroll past unheard.
         const bool isProblem = message.containsIgnoreCase ("could not")
                             || message.containsIgnoreCase ("missing")
                             || message.containsIgnoreCase ("failed")
@@ -707,12 +1273,23 @@ namespace asampler
                             || message.containsIgnoreCase ("not found")
                             || message.containsIgnoreCase ("unsupported");
 
-        // Speak the message via the screen reader even if focus didn't move.
-        // UIA Notification event on Windows; ignored on platforms without UIA.
-        if (auto* handler = getAccessibilityHandler())
-            handler->postAnnouncement (
-                message,
-                isProblem ? juce::AccessibilityHandler::AnnouncementPriority::high
-                          : juce::AccessibilityHandler::AnnouncementPriority::medium);
+        announcer.announce (message, isProblem);
+    }
+
+    // ---- Test hooks -----------------------------------------------------------
+
+    juce::Button* ASamplerEditor::getPadButton (int padIndex) const
+    {
+        return juce::isPositiveAndBelow (padIndex, kNumPads) ? padButtons[(std::size_t) padIndex].get()
+                                                             : nullptr;
+    }
+
+    juce::Button* ASamplerEditor::findButtonByTitlePrefix (const juce::String& prefix) const
+    {
+        for (auto* child : getChildren())
+            if (auto* b = dynamic_cast<juce::Button*> (child))
+                if (b->getTitle().startsWith (prefix))
+                    return b;
+        return nullptr;
     }
 }

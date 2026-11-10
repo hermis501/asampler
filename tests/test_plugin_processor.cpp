@@ -298,9 +298,10 @@ TEST_CASE ("AudioParameterChoice label ordering is frozen",
         }
     };
 
-    check (param_ids::chopCount, { "2", "4", "8", "16" });
+    check (param_ids::chopCount, { "2", "4", "8", "16", "32" });
     check (param_ids::chopMode,  { "Equal", "Transients", "Transients (Spectral)" });
-    check (param_ids::editLayer, { "Layer 1", "Layer 2", "Layer 3", "Layer 4" });
+    check (param_ids::editLayer, { "Layer 1", "Layer 2", "Layer 3", "Layer 4",
+                                   "Layer 5", "Layer 6", "Layer 7", "Layer 8" });
 
     // Per-pad choices are emitted from the same template, so locking pad 1
     // is enough to lock the others (and we exercise the param_ids helpers
@@ -326,8 +327,6 @@ TEST_CASE ("AudioParameterChoice label ordering is frozen",
              "Phrygian", "Mixolydian" });
     check (param_ids::padRepeatRate (1),
            { "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T" });
-    check (param_ids::padAftertouchDest (1),
-           { "Off", "Volume", "Filter Cutoff" });
     check (param_ids::padMode (1),
            { "Fixed", "Keyboard" });
 }
@@ -1934,145 +1933,6 @@ TEST_CASE ("Pitch bend range survives a state round-trip",
                  b.getState().getRawParameterValue (param_ids::pitchBendRange)->load()) == 7);
 }
 
-// ----- Aftertouch --------------------------------------------------------
-
-TEST_CASE ("Aftertouch Volume route boosts the bound pad's output",
-           "[plugin][aftertouch]")
-{
-    auto wav = writeConstantWav ("at_vol", 0.5f, 22050);
-    ASamplerProcessor proc;
-    REQUIRE (proc.loadSampleForPad (0, wav) == ASamplerProcessor::LoadResult::Success);
-    setParam (proc, param_ids::padRelease (1), 0.0f);
-    setParam (proc, param_ids::padAftertouchDest (1),
-              static_cast<float> (AftertouchDest::Volume));
-    setParam (proc, param_ids::padAftertouchAmount (1), 1.0f);
-    proc.prepareToPlay (44100.0, 512);
-
-    // Reference render with AT = 0.
-    juce::AudioBuffer<float> ref (2, 512);
-    {
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::channelPressureChange (1, 0), 0);
-        midi.addEvent (juce::MidiMessage::noteOn (1, 36, 1.0f), 1);
-        proc.processBlock (ref, midi);
-    }
-    const float refEnergy = blockEnergy (ref);
-
-    // Fresh processor, AT = 127.
-    ASamplerProcessor proc2;
-    REQUIRE (proc2.loadSampleForPad (0, wav) == ASamplerProcessor::LoadResult::Success);
-    setParam (proc2, param_ids::padRelease (1), 0.0f);
-    setParam (proc2, param_ids::padAftertouchDest (1),
-              static_cast<float> (AftertouchDest::Volume));
-    setParam (proc2, param_ids::padAftertouchAmount (1), 1.0f);
-    proc2.prepareToPlay (44100.0, 512);
-
-    juce::AudioBuffer<float> hot (2, 512);
-    {
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::channelPressureChange (1, 127), 0);
-        midi.addEvent (juce::MidiMessage::noteOn (1, 36, 1.0f), 1);
-        proc2.processBlock (hot, midi);
-    }
-    const float hotEnergy = blockEnergy (hot);
-
-    // amount=1, AT=1 -> volume multiplier = 1 + 1 = 2.0 -> ~2x energy.
-    REQUIRE (hotEnergy > refEnergy * 1.7f);
-    REQUIRE (hotEnergy < refEnergy * 2.3f);
-
-    wav.deleteFile();
-}
-
-TEST_CASE ("Aftertouch Cutoff route opens the filter",
-           "[plugin][aftertouch]")
-{
-    // Two passes: low-pass filter at 200 Hz over a 1 kHz sine. AT=0 should
-    // attenuate most of the signal; AT=127 with amount=1 multiplies cutoff
-    // by 8x = 1600 Hz, letting the sine through with much higher energy.
-    auto wav = writeSineWav ("at_cut", 1, 22050, 1000.0f);
-
-    auto run = [&] (int atValue)
-    {
-        ASamplerProcessor proc;
-        REQUIRE (proc.loadSampleForPad (0, wav) == ASamplerProcessor::LoadResult::Success);
-        setParam (proc, param_ids::padRelease (1), 0.0f);
-        setParam (proc, param_ids::padFilterMode (1),
-                  static_cast<float> (FilterMode::LowPass));
-        setParam (proc, param_ids::padFilterCutoff (1), 200.0f);
-        setParam (proc, param_ids::padAftertouchDest (1),
-                  static_cast<float> (AftertouchDest::FilterCutoff));
-        setParam (proc, param_ids::padAftertouchAmount (1), 1.0f);
-        proc.prepareToPlay (44100.0, 1024);
-
-        juce::AudioBuffer<float> buf (2, 1024);
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::channelPressureChange (1, atValue), 0);
-        midi.addEvent (juce::MidiMessage::noteOn (1, 36, 1.0f), 1);
-        proc.processBlock (buf, midi);
-        return blockEnergy (buf);
-    };
-
-    const float closed = run (0);
-    const float open   = run (127);
-
-    REQUIRE (open > closed * 4.0f);
-
-    wav.deleteFile();
-}
-
-TEST_CASE ("Aftertouch destination Off leaves the pad untouched",
-           "[plugin][aftertouch]")
-{
-    auto wav = writeConstantWav ("at_off", 0.5f, 22050);
-
-    auto run = [&] (int atValue)
-    {
-        ASamplerProcessor proc;
-        REQUIRE (proc.loadSampleForPad (0, wav) == ASamplerProcessor::LoadResult::Success);
-        setParam (proc, param_ids::padRelease (1), 0.0f);
-        // Destination Off; amount won't matter.
-        setParam (proc, param_ids::padAftertouchDest (1),
-                  static_cast<float> (AftertouchDest::Off));
-        setParam (proc, param_ids::padAftertouchAmount (1), 1.0f);
-        proc.prepareToPlay (44100.0, 512);
-
-        juce::AudioBuffer<float> buf (2, 512);
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::channelPressureChange (1, atValue), 0);
-        midi.addEvent (juce::MidiMessage::noteOn (1, 36, 1.0f), 1);
-        proc.processBlock (buf, midi);
-        return blockEnergy (buf);
-    };
-
-    const float cold = run (0);
-    const float hot  = run (127);
-    REQUIRE (hot == Approx (cold).margin (1.0e-3f));
-
-    wav.deleteFile();
-}
-
-TEST_CASE ("Aftertouch routing survives a state round-trip",
-           "[plugin][aftertouch][state]")
-{
-    juce::MemoryBlock data;
-    {
-        ASamplerProcessor a;
-        setParam (a, param_ids::padAftertouchDest (5),
-                  static_cast<float> (AftertouchDest::FilterCutoff));
-        setParam (a, param_ids::padAftertouchAmount (5), 0.8f);
-        a.getStateInformation (data);
-    }
-
-    ASamplerProcessor b;
-    b.setStateInformation (data.getData(), static_cast<int> (data.getSize()));
-
-    REQUIRE (juce::roundToInt (
-                 b.getState().getRawParameterValue (param_ids::padAftertouchDest (5))->load())
-             == static_cast<int> (AftertouchDest::FilterCutoff));
-    REQUIRE (b.getState().getRawParameterValue (param_ids::padAftertouchAmount (5))->load()
-             == Approx (0.8f).margin (1.0e-3f));
-}
-
 // ----- Solo / mute -------------------------------------------------------
 
 TEST_CASE ("Mute on a pad silences its output", "[plugin][mute]")
@@ -2592,6 +2452,78 @@ TEST_CASE ("Keyboard mode: note-off releases only the matching voice",
     wav.deleteFile();
 }
 
+TEST_CASE ("Keyboard mode: a loaded Fixed pad keeps its own note",
+           "[plugin][padmode]")
+{
+    // A Keyboard pad at its default full range used to fire on top of every
+    // drum in the kit. A note a loaded Fixed pad is assigned to now belongs
+    // to it; the Keyboard pad still plays every other note in its range.
+    auto wav = writeConstantWav ("ownership_drum", 0.5f, 44100);
+    ASamplerProcessor proc;
+    REQUIRE (proc.loadSampleForPad (1, wav) == ASamplerProcessor::LoadResult::Success);
+    setParam (proc, param_ids::padMode (1), static_cast<float> (PadMode::Keyboard));
+    proc.prepareToPlay (44100.0, 512);
+
+    juce::AudioBuffer<float> buf (2, 512);
+    auto drum = noteOnAt (37, 1.0f);   // Pad 2's note
+    proc.processBlock (buf, drum);
+    REQUIRE (proc.isPadSounding (1));
+    REQUIRE_FALSE (proc.isPadSounding (0));
+
+    auto melodic = noteOnAt (60, 1.0f);   // no Fixed pad owns C3
+    proc.processBlock (buf, melodic);
+    REQUIRE (proc.isPadSounding (0));
+    REQUIRE (proc.getActiveVoiceCount() == 2);
+
+    wav.deleteFile();
+}
+
+TEST_CASE ("Keyboard mode: an empty Fixed pad steps aside",
+           "[plugin][padmode]")
+{
+    // Pad 2 still holds the built-in tone. On its note the Keyboard pad
+    // plays alone, rather than the tone sounding on top of it.
+    ASamplerProcessor proc;
+    setParam (proc, param_ids::padMode (1), static_cast<float> (PadMode::Keyboard));
+    proc.prepareToPlay (44100.0, 512);
+
+    juce::AudioBuffer<float> buf (2, 512);
+    auto note = noteOnAt (37, 1.0f);
+    proc.processBlock (buf, note);
+    REQUIRE (proc.isPadSounding (0));
+    REQUIRE_FALSE (proc.isPadSounding (1));
+    REQUIRE (proc.getActiveVoiceCount() == 1);
+
+    // With no Keyboard pad covering it, the empty pad plays its note as before.
+    setParam (proc, param_ids::padHighNote (1), 30.0f);
+    auto again = noteOnAt (37, 1.0f);
+    proc.processBlock (buf, again);
+    REQUIRE (proc.isPadSounding (1));
+}
+
+TEST_CASE ("The 808 Set fires one pad per note", "[plugin][padmode][kit]")
+{
+    // Sixteen Keyboard pads over one range fired sixteen voices per note.
+    auto wav = writeConstantWav ("ownership_808", 0.5f, 44100);
+    ASamplerProcessor proc;
+    REQUIRE (proc.loadFactoryKit (3));
+    REQUIRE (proc.loadSampleForPad (4, wav) == ASamplerProcessor::LoadResult::Success);
+    proc.prepareToPlay (44100.0, 512);
+
+    juce::AudioBuffer<float> buf (2, 512);
+    auto low = noteOnAt (30, 1.0f);   // Pad 1's keyboard range
+    proc.processBlock (buf, low);
+    REQUIRE (proc.getActiveVoiceCount() == 1);
+    REQUIRE (proc.isPadSounding (0));
+
+    auto drum = noteOnAt (40, 1.0f);  // Pad 5's note, and Pad 5 is loaded
+    proc.processBlock (buf, drum);
+    REQUIRE (proc.isPadSounding (4));
+    REQUIRE (proc.getActiveVoiceCount() == 2);
+
+    wav.deleteFile();
+}
+
 TEST_CASE ("Pad Mode / Low Note / High Note survive a state round-trip",
            "[plugin][padmode][state]")
 {
@@ -2625,3 +2557,42 @@ TEST_CASE ("Pad Mode / Low Note / High Note survive a state round-trip",
                  b.getState().getRawParameterValue (param_ids::padHighNote (1))->load()) == 127);
 }
 
+
+TEST_CASE ("The mod wheel reaches notes that are already sounding",
+           "[plugin][modwheel]")
+{
+    auto wav = writeConstantWav ("modwheel_live", 0.5f, 44100);
+    ASamplerProcessor proc;
+    REQUIRE (proc.loadSampleForPad (0, wav) == ASamplerProcessor::LoadResult::Success);
+    setParam (proc, param_ids::padModWheelDest (1), static_cast<float> (ModDest::Volume));
+    setParam (proc, param_ids::padModWheelAmount (1), -1.0f);
+    proc.prepareToPlay (44100.0, 512);
+
+    juce::AudioBuffer<float> buf (2, 512);
+    auto on = noteOnAt (36, 1.0f);
+    proc.processBlock (buf, on);
+    juce::MidiBuffer none;
+    proc.processBlock (buf, none);
+    REQUIRE (blockEnergy (buf) > 0.0f);
+
+    // Wheel all the way up: amount -100% on volume silences the pad once the
+    // 20 ms ramp has run.
+    juce::MidiBuffer wheel;
+    wheel.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+    proc.processBlock (buf, wheel);
+    proc.processBlock (buf, none);
+    proc.processBlock (buf, none);
+    REQUIRE (buf.getMagnitude (0, 0, 512) < 1.0e-4f);
+
+    wav.deleteFile();
+}
+
+TEST_CASE ("LFO sync choices read as note lengths", "[plugin][lfo]")
+{
+    ASamplerProcessor proc;
+    setParam (proc, param_ids::padLfoSync (1), static_cast<float> (LfoSync::Quarter));
+    setParam (proc, param_ids::padLfo2Sync (1), static_cast<float> (LfoSync::EighthTriplet));
+    REQUIRE (proc.getState().getParameter (param_ids::padLfoSync (1))->getCurrentValueAsText() == "1/4");
+    REQUIRE (proc.getState().getParameter (param_ids::padLfo2Sync (1))->getCurrentValueAsText() == "1/8 triplet");
+    REQUIRE (proc.getState().getParameter (param_ids::padModWheelAmount (1))->getCurrentValueAsText() == "+50%");
+}

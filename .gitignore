@@ -17,3 +17,10 @@ _sdk/
 
 # Per-machine Claude Code permissions
 .claude/settings.local.json
+
+# Locally built installers (CI builds the released ones)
+package/
+
+# Personal launchers
+claude_start.bat
+claude_resume.bat

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(ASampler VERSION 0.1.0 LANGUAGES C CXX)
+project(ASampler VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +51,8 @@ add_library(asampler_core STATIC
     source/engine/Saturation.h
     source/engine/Transient.h
     source/engine/Transient.cpp
+    source/engine/SampleAnalysis.h
+    source/engine/SampleAnalysis.cpp
     source/engine/PhaseVocoder.cpp
     source/engine/PhaseVocoder.h
 )
@@ -64,6 +66,10 @@ target_link_libraries(asampler_core PUBLIC
 target_compile_definitions(asampler_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    # Sample packs ship MP3s. macOS decodes them through CoreAudio already;
+    # this enables JUCE's own decoder so Windows reads them too. PUBLIC so the
+    # plugin target compiles juce_audio_formats with the same setting.
+    JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
@@ -82,7 +88,7 @@ juce_add_plugin(ASampler
     FORMATS                     VST3 AU
     IS_SYNTH                    TRUE
     NEEDS_MIDI_INPUT            TRUE
-    NEEDS_MIDI_OUTPUT           FALSE
+    NEEDS_MIDI_OUTPUT           TRUE
     IS_MIDI_EFFECT              FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD     FALSE
@@ -94,9 +100,12 @@ target_sources(ASampler PRIVATE
     source/PluginProcessor.h
     source/PluginEditor.cpp
     source/PluginEditor.h
-    source/VocalSynth.cpp
-    source/VocalSynth.h
     source/FocusProxyParameter.h
+    source/ScreenReaderAnnouncer.cpp
+    source/ReaperIntegration.cpp
+    source/ClipboardFiles.cpp
+    source/ClipboardFiles.h
+    source/ScreenReaderAnnouncer.h
 )
 
 target_compile_definitions(ASampler PUBLIC

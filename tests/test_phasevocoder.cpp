@@ -5,7 +5,9 @@
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 using namespace asampler;
@@ -399,4 +401,259 @@ TEST_CASE ("Transient preservation keeps attacks sharp", "[vocoder][transient]")
     const float after  = rms (out, onsetOut + 1000, 4000);
 
     REQUIRE (after > before * 2.0f);
+}
+
+// ----- Stereo linking ---------------------------------------------------------
+//
+// Each channel used to track its own phase, so channels drifted apart: the
+// stereo image wobbled and the mono sum went hollow. All channels now share one
+// phase rotation per bin, so the phase relationship between channels comes out
+// as it went in.
+
+namespace
+{
+    // A broadband test signal: a chord of partials plus some noise, so phase
+    // estimates are imperfect, like real material rather than a lone sine.
+    std::vector<float> makeRichSignal (int numSamples, juce::Random& rng, float noiseLevel)
+    {
+        std::vector<float> s ((std::size_t) numSamples);
+        const double freqs[] = { 110.0, 220.0, 277.2, 329.6, 440.0, 659.3, 880.0, 1318.5 };
+        for (int i = 0; i < numSamples; ++i)
+        {
+            double v = 0.0;
+            for (double f : freqs)
+                v += std::sin (2.0 * juce::MathConstants<double>::pi * f * i / 44100.0);
+            s[(std::size_t) i] = static_cast<float> (v / 8.0)
+                               + noiseLevel * (rng.nextFloat() * 2.0f - 1.0f);
+        }
+        return s;
+    }
+
+    double correlation (const juce::AudioBuffer<float>& b, int start, int len)
+    {
+        double sl = 0, sr = 0, sll = 0, srr = 0, slr = 0;
+        for (int i = start; i < start + len; ++i)
+        {
+            const double l = b.getSample (0, i), r = b.getSample (1, i);
+            sl += l; sr += r; sll += l * l; srr += r * r; slr += l * r;
+        }
+        const double n = len;
+        const double cov = slr / n - (sl / n) * (sr / n);
+        const double vl  = sll / n - (sl / n) * (sl / n);
+        const double vr  = srr / n - (sr / n) * (sr / n);
+        return cov / std::sqrt (juce::jmax (1e-12, vl * vr));
+    }
+
+    // Level of the mono sum relative to the channels: 1 for identical
+    // channels, ~0.707 for unrelated ones, 0 for opposite polarity.
+    double monoSumRatio (const juce::AudioBuffer<float>& b, int start, int len)
+    {
+        double sum = 0, chans = 0;
+        for (int i = start; i < start + len; ++i)
+        {
+            const double l = b.getSample (0, i), r = b.getSample (1, i);
+            sum   += 0.25 * (l + r) * (l + r);
+            chans += 0.5 * (l * l + r * r);
+        }
+        return std::sqrt (sum / juce::jmax (1e-12, chans));
+    }
+}
+
+TEST_CASE ("Stereo stretch keeps the correlation between channels", "[vocoder][stretch][stereo]")
+{
+    constexpr int n = 88200;
+    juce::Random rng (7);
+    const auto common = makeRichSignal (n, rng, 0.0f);
+
+    // Shared musical content, different noise per side: a typical wide mix.
+    juce::AudioBuffer<float> in (2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        in.setSample (0, i, common[(std::size_t) i] + 0.15f * (rng.nextFloat() * 2.0f - 1.0f));
+        in.setSample (1, i, common[(std::size_t) i] + 0.15f * (rng.nextFloat() * 2.0f - 1.0f));
+    }
+
+    for (double ratio : { 0.8, 1.25, 1.5 })
+    {
+        CAPTURE (ratio);
+        StretchOptions opts; opts.timeRatio = ratio;
+        const auto out = processOffline (in, 44100.0, opts);
+
+        const int len = 32768;
+        const double before = correlation (in, 8192, len);
+        const double after  = correlation (out, 8192, len);
+        CAPTURE (before, after);
+        REQUIRE (std::abs (after - before) < 0.08);
+
+        const double monoBefore = monoSumRatio (in, 8192, len);
+        const double monoAfter  = monoSumRatio (out, 8192, len);
+        CAPTURE (monoBefore, monoAfter);
+        REQUIRE (std::abs (monoAfter - monoBefore) < 0.05);
+    }
+}
+
+TEST_CASE ("Stereo stretch keeps a time-delay image in place", "[vocoder][stretch][stereo]")
+{
+    // The right channel is the left delayed by 12 samples (sound arriving at
+    // one ear first). That offset must survive stretching.
+    constexpr int n = 88200, delay = 12;
+    juce::Random rng (11);
+    const auto sig = makeRichSignal (n + delay, rng, 0.1f);
+
+    juce::AudioBuffer<float> in (2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        in.setSample (0, i, sig[(std::size_t) (i + delay)]);
+        in.setSample (1, i, sig[(std::size_t) i]);
+    }
+
+    StretchOptions opts; opts.timeRatio = 1.3;
+    const auto out = processOffline (in, 44100.0, opts);
+
+    int bestLag = 0;
+    double best = -1e9;
+    for (int lag = -40; lag <= 40; ++lag)
+    {
+        double acc = 0;
+        for (int i = 10000; i < 40000; ++i)
+            acc += out.getSample (0, i) * out.getSample (1, i + lag);
+        if (acc > best) { best = acc; bestLag = lag; }
+    }
+    CAPTURE (bestLag);
+    REQUIRE (std::abs (bestLag - delay) <= 1);
+}
+
+TEST_CASE ("Opposite-polarity channels still cancel after stretching", "[vocoder][stretch][stereo]")
+{
+    constexpr int n = 66150;
+    juce::Random rng (3);
+    const auto sig = makeRichSignal (n, rng, 0.1f);
+
+    juce::AudioBuffer<float> in (2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        in.setSample (0, i,  sig[(std::size_t) i]);
+        in.setSample (1, i, -sig[(std::size_t) i]);
+    }
+
+    StretchOptions opts; opts.timeRatio = 1.4; opts.formantSemitones = 2.0;
+    const auto out = processOffline (in, 44100.0, opts);
+    REQUIRE (monoSumRatio (out, 4096, 40000) < 0.01);
+}
+
+TEST_CASE ("Identical channels stay identical", "[vocoder][stretch][stereo]")
+{
+    constexpr int n = 44100;
+    juce::Random rng (5);
+    const auto sig = makeRichSignal (n, rng, 0.2f);
+
+    juce::AudioBuffer<float> in (2, n);
+    for (int i = 0; i < n; ++i)
+        for (int ch = 0; ch < 2; ++ch)
+            in.setSample (ch, i, sig[(std::size_t) i]);
+
+    StretchOptions opts; opts.timeRatio = 0.75;
+    const auto out = processOffline (in, 44100.0, opts);
+    // Both channels share one packed transform, so they agree to float
+    // rounding (around -90 dB) rather than bit for bit.
+    float worst = 0.0f;
+    for (int i = 0; i < out.getNumSamples(); ++i)
+        worst = std::max (worst, std::abs (out.getSample (0, i) - out.getSample (1, i)));
+    REQUIRE (worst < 1.0e-4f);   // -80 dB
+}
+
+TEST_CASE ("High sample rates keep the same analysis time span", "[vocoder][stretch]")
+{
+    // At 96 kHz a fixed 2048-point window would span only 21 ms, too short to
+    // resolve a low 808. A 55 Hz tone must keep its pitch at both rates.
+    for (double rate : { 44100.0, 96000.0 })
+    {
+        CAPTURE (rate);
+        auto in = makeSine ((int) (rate * 2), 55.0, rate);
+        StretchOptions opts; opts.timeRatio = 1.5;
+        const auto out = processOffline (in, rate, opts);
+        const double f = dominantFrequency (out, rate, (int) rate / 2);
+        REQUIRE (f == Catch::Approx (55.0).margin (rate > 50000 ? 1.5 : 1.0));
+    }
+}
+
+TEST_CASE ("Stereo stretch keeps the image of instruments panned apart",
+           "[vocoder][stretch][stereo]")
+{
+    // Two instruments a few Hz apart share FFT bins, one panned left and one
+    // right. Each channel on its own hears a different "true frequency" in
+    // those bins; tracked independently, the shared component's phase drifts
+    // between the channels and the image smears. Linked, it cannot.
+    constexpr int n = 88200;
+    juce::AudioBuffer<float> in (2, n);
+    const double a[] = { 196.0, 293.7, 440.0, 587.3 };
+    const double b[] = { 203.0, 301.0, 449.0, 598.0 };
+    for (int i = 0; i < n; ++i)
+    {
+        double sa = 0, sb = 0;
+        for (int p = 0; p < 4; ++p)
+        {
+            sa += std::sin (2.0 * juce::MathConstants<double>::pi * a[p] * i / 44100.0);
+            sb += std::sin (2.0 * juce::MathConstants<double>::pi * b[p] * i / 44100.0 + p);
+        }
+        in.setSample (0, i, static_cast<float> ((1.0 * sa + 0.4 * sb) / 8.0));
+        in.setSample (1, i, static_cast<float> ((0.4 * sa + 1.0 * sb) / 8.0));
+    }
+
+    for (double ratio : { 0.8, 1.5, 2.0 })
+    {
+        CAPTURE (ratio);
+        StretchOptions opts; opts.timeRatio = ratio;
+        const auto out = processOffline (in, 44100.0, opts);
+
+        const double before = correlation (in, 8192, 32768);
+        const double after  = correlation (out, 8192, 32768);
+        CAPTURE (before, after);
+        REQUIRE (std::abs (after - before) < 0.08);
+    }
+}
+
+// CPU cost of one stretch / formant render. Hidden; run with
+// ASamplerTests.exe "[.stretchbench]".
+TEST_CASE ("Stretch render cost for a 10 second stereo sample", "[.stretchbench]")
+{
+    constexpr double sr = 44100.0;
+    auto input = makeSine (static_cast<int> (sr * 10.0), 220.0, sr, 2);
+    juce::Random rng (7);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < input.getNumSamples(); ++i)
+            input.addSample (ch, i, (rng.nextFloat() - 0.5f) * 0.2f);
+
+    auto timeIt = [&] (const char* label, StretchOptions options)
+    {
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        auto out = processOffline (input, sr, options);
+        const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+        std::printf ("%-24s %8.1f ms (%d samples out)\n", label, ms, out.getNumSamples());
+    };
+
+    StretchOptions stretch;  stretch.timeRatio = 1.1;
+    StretchOptions formant;  formant.formantSemitones = 3.0;
+    StretchOptions both;     both.timeRatio = 1.1; both.formantSemitones = 3.0;
+    timeIt ("stretch 1.1", stretch);
+    timeIt ("formant +3", formant);
+    timeIt ("stretch + formant", both);
+    SUCCEED();
+}
+
+TEST_CASE ("A render that is told to abort stops and returns nothing",
+           "[vocoder][stretch]")
+{
+    // A render superseded by a newer setting has to give its thread back
+    // rather than finish work nobody will hear.
+    auto in = makeSine (44100 * 4, 220.0, 44100.0, 2);
+    StretchOptions opts; opts.timeRatio = 1.5;
+
+    int polls = 0;
+    const auto out = processOffline (in, 44100.0, opts, [&] { return ++polls > 2; });
+    REQUIRE (out.getNumSamples() == 0);
+    REQUIRE (polls == 3);
+
+    const auto full = processOffline (in, 44100.0, opts, [] { return false; });
+    REQUIRE (full.getNumSamples() > juce::roundToInt (in.getNumSamples() * 1.45));
 }

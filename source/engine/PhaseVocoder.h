@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <functional>
 #include <vector>
 
 namespace asampler
@@ -40,6 +41,11 @@ namespace asampler
     //      re-applied. Shifting the envelope independently of the harmonics is
     //      what makes a pitch move sound like the same instrument rather than
     //      a chipmunk.
+    //
+    //   4. **Stereo linking.** All channels share one phase rotation per bin,
+    //      so the phase relationship between channels — the stereo image and
+    //      the mono sum — survives the stretch. Processing channels on their
+    //      own lets them drift apart and smears anything panned.
     struct StretchOptions
     {
         // Output duration multiplier. 2.0 = twice as long (half speed) with no
@@ -67,9 +73,14 @@ namespace asampler
     //
     // Input shorter than one analysis window, or neutral options, returns a
     // copy. Never returns an empty buffer for non-empty input.
+    //
+    // `shouldAbort`, when given, is polled every few dozen frames; returning
+    // true stops the render and returns an empty buffer. A render superseded
+    // by a newer setting uses it to stop wasting a core.
     juce::AudioBuffer<float> processOffline (const juce::AudioBuffer<float>& input,
                                              double sampleRate,
-                                             const StretchOptions& options);
+                                             const StretchOptions& options,
+                                             const std::function<bool()>& shouldAbort = {});
 
     // Spectral envelope of `magnitudes` by cepstral liftering, keeping the
     // first `liftOrder` cepstral coefficients. Exposed so the envelope

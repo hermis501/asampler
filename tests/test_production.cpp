@@ -106,7 +106,7 @@ TEST_CASE ("Focus proxies read the focused pad", "[plugin][focus]")
         return nullptr;
     };
 
-    auto* volProxy = findProxy ("Volume");
+    auto* volProxy = findProxy ("Focus Volume");
     REQUIRE (volProxy != nullptr);
 
     auto* padVol1 = proc.getState().getParameter (param_ids::padVolume (1));
@@ -129,7 +129,7 @@ TEST_CASE ("Focus proxy writes through to the focused pad", "[plugin][focus]")
 
     juce::AudioProcessorParameter* volProxy = nullptr;
     for (auto* p : proc.getParameters())
-        if (dynamic_cast<FocusProxyParameter*> (p) != nullptr && p->getName (64) == "Volume")
+        if (dynamic_cast<FocusProxyParameter*> (p) != nullptr && p->getName (64) == "Focus Volume")
             volProxy = p;
 
     REQUIRE (volProxy != nullptr);
@@ -152,7 +152,7 @@ TEST_CASE ("Focus proxy formats text like the pad parameter", "[plugin][focus][a
 
     juce::AudioProcessorParameter* volProxy = nullptr;
     for (auto* p : proc.getParameters())
-        if (dynamic_cast<FocusProxyParameter*> (p) != nullptr && p->getName (64) == "Volume")
+        if (dynamic_cast<FocusProxyParameter*> (p) != nullptr && p->getName (64) == "Focus Volume")
             volProxy = p;
 
     REQUIRE (volProxy != nullptr);
@@ -313,7 +313,7 @@ TEST_CASE ("Factory kits apply settings", "[plugin][kit]")
     REQUIRE_FALSE (proc.loadFactoryKit (-1));
     REQUIRE_FALSE (proc.loadFactoryKit (names.size()));
 
-    // The 808 kit should leave every pad keyboard-playable and monophonic.
+    // The 808 kit makes pad 1 keyboard-playable and monophonic.
     REQUIRE (proc.loadFactoryKit (3));
     REQUIRE (juce::roundToInt (plainValue (proc, param_ids::padMode (1)))
              == static_cast<int> (PadMode::Keyboard));
