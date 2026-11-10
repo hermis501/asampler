@@ -134,12 +134,16 @@ jobs:
           ditto "$out/AU/ASampler.component" "$root/Library/Audio/Plug-Ins/Components/ASampler.component"
           # Bundles are "relocatable" by default: Installer would update a copy
           # it finds elsewhere on disk instead of installing where hosts look.
+          # Newer pkgbuild versions leave the key out of the analysis, so add
+          # it where Set finds nothing.
           pkgbuild --analyze --root "$root" components.plist
           i=0
           while /usr/libexec/PlistBuddy -c "Print :$i" components.plist >/dev/null 2>&1; do
-            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist
+            /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" components.plist 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" components.plist
             i=$((i+1))
           done
+          plutil -p components.plist
           pkgbuild --root "$root" --component-plist components.plist \
                    --identifier com.asampler.plugins --version "$ASAMPLER_VERSION" \
                    --install-location / ASampler-plugins.pkg
