@@ -13,6 +13,16 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
+# Clang and GCC fuse a * b + c into one FMA instruction where the CPU has one
+# (Apple Silicon always does). That skips the rounding of the product, so JUCE's
+# interval snapping, -24 + 0.01f * 2400, leaves a 0 default at about 5e-7
+# instead of exactly 0 - which floor/ceil turn into a whole extra semitone, and
+# "is this neutral?" checks read as a tiny shift. Keep the arithmetic the same
+# as the MSVC build every test was written against.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-ffp-contract=off)
+endif()
+
 # Where the SDKs live. Override on the cmake command line if they move.
 #
 # These are CACHE variables, so the first configure of a build dir freezes them.

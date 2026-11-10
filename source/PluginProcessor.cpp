@@ -4497,10 +4497,13 @@ namespace asampler
         const double velLow    = juce::jmin (0.0, velAmount);
         const double velHigh   = juce::jmax (0.0, velAmount);
 
+        // The small slack keeps float rounding in the parameters (a Pitch of
+        // 1e-7 rather than 0) from adding a whole semitone to either end.
+        constexpr double slack = 1.0e-4;
         const int minOffset = static_cast<int> (
-            std::floor (noteLow + constantOffset + velLow));
+            std::floor (noteLow + constantOffset + velLow + slack));
         const int maxOffset = static_cast<int> (
-            std::ceil (noteHigh + constantOffset + velHigh));
+            std::ceil (noteHigh + constantOffset + velHigh - slack));
 
         key.minOffset = juce::jlimit (-kMaxFormantOffset, kMaxFormantOffset, minOffset);
         key.maxOffset = juce::jlimit (-kMaxFormantOffset, kMaxFormantOffset, maxOffset);
