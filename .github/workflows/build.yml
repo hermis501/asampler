@@ -34,7 +34,7 @@ jobs:
       matrix:
         include:
           - name: macOS
-            os: macos-14
+            os: macos-latest
             # Universal binary: native on Apple Silicon and Intel Macs.
             # Quoted: an unquoted ";" would split the bash command in two.
             cmake_args: >-
@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # JUCE and Catch2 are not in the repo. Clone them into the workspace and
       # pass relative :PATH values - CMake makes those absolute against the
@@ -163,7 +163,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ASampler-${{ matrix.name }}
           path: |
@@ -180,9 +180,9 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
