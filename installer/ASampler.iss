@@ -56,6 +56,11 @@ Source: "{#SourceDir}\CHANGELOG.md";     DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\scripts\ASampler - Create pad tracks.lua"; DestDir: "{app}\REAPER"; Flags: ignoreversion
 Source: "{#SourceDir}\scripts\ASampler - Create pad tracks.lua"; DestDir: "{userappdata}\REAPER\Scripts\ASampler"; \
     Flags: ignoreversion; Tasks: reaperaction
+; The load-file script (and example of ASampler's script protocol). It is
+; copied into REAPER's Scripts folder but not registered: the user adds it
+; with Actions > Load ReaScript.
+Source: "{#SourceDir}\scripts\ASampler - Load file onto pad.lua"; DestDir: "{app}\REAPER"; Flags: ignoreversion
+Source: "{#SourceDir}\scripts\ASampler - Load file onto pad.lua"; DestDir: "{userappdata}\REAPER\Scripts\ASampler";     Flags: ignoreversion; Tasks: reaperaction
 
 [Icons]
 Name: "{group}\ASampler Manual"; Filename: "{app}\manual.html"

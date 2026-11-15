@@ -445,6 +445,11 @@ namespace asampler
         inline juce::String padSpeed      (int pad) { return "pad_" + juce::String (pad) + "_speed";   }
         // Notes played away from the root keep the sample's length.
         inline juce::String padKeepLength (int pad) { return "pad_" + juce::String (pad) + "_keeplen"; }
+        // Amp and filter envelope hold (AHDSR), seconds.
+        inline juce::String padHold         (int pad) { return "pad_" + juce::String (pad) + "_hold";     }
+        inline juce::String padFiltEnvHold  (int pad) { return "pad_" + juce::String (pad) + "_fenvhold"; }
+        // Leave the loop on note-off and play on to End.
+        inline juce::String padLoopExit     (int pad) { return "pad_" + juce::String (pad) + "_loopexit"; }
     }
 
     class ASamplerProcessor : public juce::AudioProcessor,
@@ -559,6 +564,38 @@ namespace asampler
         // read. 0 when everything resolved.
         int getMissingSampleCount() const;
 
+        // ---- What the window shows (message thread) ----
+        //
+        // What a pad holds, for its colour: the built-in tone, a loaded
+        // sample, or a sample whose file could not be found.
+        enum class PadContent { BuiltIn, Loaded, Missing };
+        PadContent getPadContent (int padIndex) const;
+
+        // Hits on a pad since the plugin started (wraps around), and the last
+        // hit's velocity 0..1, so pads can light up when they play.
+        uint32_t getPadHitCount (int padIndex) const noexcept;
+        float    getPadHitVelocity (int padIndex) const noexcept;
+
+        // Where a sounding voice on the pad is, 0..1 through the sample it
+        // plays, or -1 when the pad is silent. Updated once per block.
+        float getPadPlayFraction (int padIndex) const noexcept;
+
+        // Highest level on the Main output since the last call (linear gain),
+        // then starts again from silence.
+        float takeOutputPeak() noexcept;
+
+        // The sample the waveform shows and the slice points apply to: a
+        // sample being tried, else the edit layer, else the first loaded
+        // layer, else the built-in tone.
+        std::shared_ptr<const Sample> getPadDisplaySample (int padIndex) const { return referenceSample (padIndex); }
+
+        // Render one hit of the pad, exactly as a bounce does, and write it to
+        // `file` as a 24-bit WAV, without loading it anywhere. For "Save pad
+        // as audio file" and for dragging a pad out of the window.
+        bool savePadAudio (int padIndex, const juce::File& file, bool announceResult = true);
+        // A file name (no extension) for a pad's audio: "Pad 3 Kick 01".
+        juce::String getPadAudioFileStem (int padIndex) const;
+
         // Set the layer's gain parameter so its peak sits at -1 dBFS. Adjusts
         // the parameter rather than the audio, so it stays non-destructive,
         // automatable and undoable. Returns false if the layer is empty/silent.
@@ -628,8 +665,18 @@ namespace asampler
 
         // Built-in starting points. These configure envelopes, choke groups,
         // note layout and character — the setup work — and leave the samples to
-        // the user, so they are useful without shipping any audio.
+        // the user, so they are useful without shipping any audio. The one
+        // exception is Starter Drums, which puts eight sounds synthesised in
+        // code (engine/StarterSounds) on pads 1 to 8, so a first-time user has
+        // something to play; that replacement is part of the same undo step.
         static juce::StringArray getFactoryKitNames();
+        // Where the Starter Drums kit writes its synthesised sounds
+        // (<app data>/ASampler/starter).
+        static juce::File getStarterSoundsFolder()
+        {
+            return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("ASampler").getChildFile ("starter");
+        }
 
         // "1.0.0", from the CMake project version. Shown and spoken by the
         // editor so a support question can start with "which version?".
@@ -744,6 +791,14 @@ namespace asampler
         // the status (so the editor announces it) and returns the text.
         juce::String describePad (int padIndex);
 
+        // Tune the pad to the pitch detected in its sample (Start..End of the
+        // edit layer): sets Pitch so a Fixed pad plays the nearest note in
+        // tune, and a Keyboard pad plays its root note's pitch on its root
+        // key (an F 808 on root C is moved down to C), within half an octave.
+        // One undo step; announces what it found and did. False when the
+        // sample has no clear pitch (drums, noise), leaving Pitch alone.
+        bool tunePad (int padIndex);
+
         // ---- Resample / bounce ----
         //
         // Render one hit of `padIndex` with everything the pad does to it
@@ -815,6 +870,9 @@ namespace asampler
         static juce::String getPadControlName (int index);
         static juce::String getPadControlSection (int index);
         juce::String        getPadControlValueText (int padIndex, int controlIndex) const;
+        // The host parameter behind control `controlIndex` on `padIndex`
+        // (0-based), or nullptr if either is out of range.
+        juce::RangedAudioParameter* getPadControlParameter (int padIndex, int controlIndex) const;
 
         // Copy one control's value (or every control in `section`) from
         // `sourcePad` to every pad in [firstPad, lastPad]. One undo step.
@@ -875,6 +933,13 @@ namespace asampler
         void stopPreview();
         bool isPreviewPlaying() const noexcept { return previewActive.load(); }
 
+        // Read `file` on the loader thread and play it on the preview player,
+        // for the sample browser. Only the latest request plays, so arrowing
+        // quickly through a folder never queues a pile of sounds.
+        void previewFile (const juce::File& file);
+        // Stops a file preview and drops any still being read.
+        void stopFilePreview();
+
         // ---- Slice-point scrubbing ----
         //
         // Play a short snippet that lets a slice point be placed by ear: ~80 ms
@@ -913,6 +978,18 @@ namespace asampler
         // volume and take FX), copy the result to the app-data folder and load
         // it onto `padIndex`. REAPER's project is restored with an undo.
         bool grabReaperItem (int padIndex, const juce::File& outputDir = {});
+
+        // A load request from a ReaScript: "<pad>|<file>", pad 1-32 or 0 for
+        // the selected pad. Scripts post it with
+        //   reaper.SetExtState ("ASampler", "load " .. trackGUID, "3|C:\kick.wav", false)
+        // and the ASampler on that track picks it up within a tenth of a
+        // second (see syncWithReaper). The file loads into the edit layer.
+        bool loadFromScriptRequest (const juce::String& request);
+
+        // REAPER, every timer tick: an undo point for sample and name changes
+        // REAPER can't see as parameter changes, and script load requests.
+        // Public for tests; does nothing outside REAPER.
+        void syncWithReaper();
 
         // juce::AudioProcessorParameter::Listener
         void parameterValueChanged    (int parameterIndex, float newValue) override;
@@ -1056,12 +1133,23 @@ namespace asampler
             std::array<std::atomic<float>*, kNumLayers> layerFine     {};
             std::atomic<float>* speed            = nullptr;
             std::atomic<float>* keepLength       = nullptr;
+            std::atomic<float>* hold             = nullptr;
+            std::atomic<float>* filtEnvHold      = nullptr;
+            std::atomic<float>* loopExit         = nullptr;
         };
 
         // Read an audio file into a Sample without touching any pad state, so
         // it is safe to call from the loader thread.
         LoadResult readSampleFile (const juce::File& file,
                                    std::shared_ptr<const Sample>& out) const;
+
+        // One hit of the pad as a bounce renders it, into `out` (2 channels),
+        // `length` samples long after trimming the silent tail. False when
+        // the pad has nothing to render.
+        bool renderPadHit (int padIndex, juce::AudioBuffer<float>& out, int& length,
+                           double& sampleRate, int& layerOut);
+        static bool writeWav24 (const juce::File& file, const juce::AudioBuffer<float>& buffer,
+                                int length, double sampleRate);
 
         // Open a named undo step around a group of parameter writes.
         //
@@ -1142,6 +1230,15 @@ namespace asampler
         void setLayerAudio (int padIndex, int layerIndex,
                             std::shared_ptr<const Sample> sample,
                             const juce::String& filePath, bool missing = false);
+
+        // setLayerAudio as a step in the undo history, for the actions whose
+        // whole point is replacing samples (Reset, Clear all pads, the
+        // Starter Drums kit), so Undo brings the previous samples back and
+        // not only the settings. Call after beginUndoTransaction.
+        void setLayerAudioUndoable (int padIndex, int layerIndex,
+                                    std::shared_ptr<const Sample> sample,
+                                    const juce::String& filePath);
+        struct LayerAudioAction;
 
         // ---- Offline stretch / formant rendering ----
         //
@@ -1424,6 +1521,20 @@ namespace asampler
         // Try-before-you-keep: a candidate sample the pad plays in place of
         // its edit layer, and the file it came from.
         std::array<AtomicSharedPtr<const Sample>, kNumPads> previewOverride;
+
+        // Published by the audio thread for the window (see getPadHitCount
+        // and friends). Only atomics: the window never touches voices.
+        std::array<std::atomic<uint32_t>, kNumPads> padHitCount {};
+        std::array<std::atomic<float>, kNumPads>    padHitVelocity {};
+        std::array<std::atomic<float>, kNumPads>    padPlayFraction {};
+        std::array<float, kNumPads>                 playFractionScratch {};   // audio thread
+        std::atomic<float>                          outputPeak { 0.0f };
+        std::atomic<int>                            filePreviewRequest { 0 };
+
+        // Set when samples or pad names change outside a state restore, so
+        // the next timer tick gives REAPER an undo point for it.
+        std::atomic<bool>                           hostStateDirty { false };
+        std::atomic<int>                            restoringState { 0 };
         std::array<juce::String, kNumPads>                  previewFilePath;   // message thread
 
         // Live notes from the editor, single producer (message thread), single

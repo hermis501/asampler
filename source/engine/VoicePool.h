@@ -97,6 +97,11 @@ namespace asampler
 
         int countActive() const noexcept;
 
+        // For each pad in [0, numPads), the play position (0..1) of one of its
+        // sounding voices, or -1 when none is sounding. Audio thread only; the
+        // caller publishes the result to the UI through atomics.
+        void collectPlayFractions (float* out, int numPads) const noexcept;
+
     private:
         struct Slot
         {

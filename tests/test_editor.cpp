@@ -279,4 +279,190 @@ TEST_CASE ("Keyboard help covers the new shortcuts", "[editor][keyboard]")
     REQUIRE (help.contains ("T edits Start"));
     REQUIRE (help.contains ("F2 renames"));
     REQUIRE (help.contains ("grabs the selected item"));
+    REQUIRE (help.contains ("selected pad's settings"));
+}
+
+// ---- Settings panel ---------------------------------------------------------
+
+namespace
+{
+    float plain (ASamplerProcessor& proc, const juce::String& id)
+    {
+        auto* p = proc.getState().getParameter (id);
+        REQUIRE (p != nullptr);
+        return p->convertFrom0to1 (p->getValue());
+    }
+
+    bool press (juce::Component* c, int keyCode, juce::ModifierKeys mods = {})
+    {
+        REQUIRE (c != nullptr);
+        return c->keyPressed (juce::KeyPress (keyCode, mods, 0));
+    }
+}
+
+TEST_CASE ("The settings panel shows the selected pad's settings by section",
+           "[editor][settings][accessibility]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    // Same sections as the Focus group, Main first.
+    REQUIRE (panel.getSections()[0] == "Main");
+    REQUIRE (panel.getSections().contains ("Stereo"));
+    REQUIRE (panel.getSections().contains ("Filter"));
+    REQUIRE (panel.getSectionBox().getTitle() == "Settings section");
+
+    // Knobs, lists and checkboxes by the parameter's kind, titled by name.
+    REQUIRE (dynamic_cast<juce::Slider*>       (panel.findControl ("Volume"))  != nullptr);
+    REQUIRE (dynamic_cast<juce::ToggleButton*> (panel.findControl ("Reverse")) != nullptr);
+    REQUIRE (panel.findControl ("Filter Cutoff") == nullptr);   // another section
+
+    panel.showSection (panel.getSections().indexOf ("Trigger"));
+    REQUIRE (dynamic_cast<juce::ComboBox*> (panel.findControl ("Mode")) != nullptr);
+    REQUIRE (panel.findControl ("Volume") == nullptr);
+
+    // The section list drives the same thing.
+    panel.getSectionBox().setSelectedItemIndex (panel.getSections().indexOf ("Filter"), juce::sendNotificationSync);
+    REQUIRE (panel.getSectionIndex() == panel.getSections().indexOf ("Filter"));
+    REQUIRE (panel.findControl ("Filter Cutoff") != nullptr);
+}
+
+TEST_CASE ("Settings knobs change the selected pad and follow it to another pad",
+           "[editor][settings][keyboard]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    auto* pan = dynamic_cast<juce::Slider*> (panel.findControl ("Pan"));
+    REQUIRE (pan != nullptr);
+
+    // One arrow press is a usable step (1% of the range), not the
+    // parameter's tiny interval; Shift is ten times that.
+    const float before = plain (proc, param_ids::padPan (1));
+    REQUIRE (press (pan, juce::KeyPress::rightKey));
+    const float oneStep = plain (proc, param_ids::padPan (1)) - before;
+    REQUIRE (oneStep > 0.015f);
+    REQUIRE (oneStep < 0.025f);
+    REQUIRE (press (pan, juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier));
+    REQUIRE (plain (proc, param_ids::padPan (1)) - before > 0.2f);
+
+    // Home and End reach the ends.
+    REQUIRE (press (pan, juce::KeyPress::homeKey));
+    REQUIRE (plain (proc, param_ids::padPan (1)) == -1.0f);
+
+    // The same knob now works on Pad 3, and Pad 1 keeps its value.
+    proc.setFocusedPad (2);   // as the grid, the host or Ctrl+3 would
+    editor.refreshLabelsNow();
+    REQUIRE (panel.getPad() == 2);
+    REQUIRE (panel.findControl ("Pan") == pan);   // rebound, not rebuilt: focus survives
+
+    REQUIRE (press (pan, juce::KeyPress::endKey));
+    REQUIRE (plain (proc, param_ids::padPan (3)) == 1.0f);
+    REQUIRE (plain (proc, param_ids::padPan (1)) == -1.0f);
+
+    // Its value reads as the host list does.
+    REQUIRE (pan->getTextFromValue (pan->getValue())
+             == proc.getState().getParameter (param_ids::padPan (3))->getCurrentValueAsText());
+}
+
+TEST_CASE ("Settings checkboxes and lists write the parameter", "[editor][settings]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    auto* reverse = dynamic_cast<juce::Button*> (panel.findControl ("Reverse"));
+    REQUIRE (reverse != nullptr);
+    reverse->setToggleState (true, juce::sendNotificationSync);
+    REQUIRE (plain (proc, param_ids::padReverse (1)) == 1.0f);
+
+    panel.showSection (panel.getSections().indexOf ("Trigger"));
+    auto* modeBox = dynamic_cast<juce::ComboBox*> (panel.findControl ("Mode"));
+    REQUIRE (modeBox != nullptr);
+    modeBox->setSelectedItemIndex (static_cast<int> (PadMode::Keyboard), juce::sendNotificationSync);
+    REQUIRE (juce::roundToInt (plain (proc, param_ids::padMode (1))) == static_cast<int> (PadMode::Keyboard));
+}
+
+TEST_CASE ("While editing Start by ear, arrows on a settings knob move Start, not the knob",
+           "[editor][settings][scrub]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto* volume = editor.getSettingsPanel().findControl ("Volume");
+    const float before = plain (proc, param_ids::padVolume (1));
+
+    REQUIRE (editor.keyPressed (juce::KeyPress ('t', {}, 't')));
+    REQUIRE (editor.getMode() == ASamplerEditor::Mode::EditStart);
+    REQUIRE (press (volume, juce::KeyPress::rightKey));
+    REQUIRE (plain (proc, param_ids::padVolume (1)) == before);
+    REQUIRE (press (volume, juce::KeyPress::escapeKey));
+    REQUIRE (editor.getMode() == ASamplerEditor::Mode::Normal);
+}
+
+TEST_CASE ("The settings panel comes right after the pads in the Tab order",
+           "[editor][settings][accessibility]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+
+    const int panelOrder = editor.getSettingsPanel().getExplicitFocusOrder();
+    REQUIRE (panelOrder > editor.getPadButton (kNumPads - 1)->getExplicitFocusOrder());
+    auto* load = editor.findButtonByTitlePrefix ("Load");
+    REQUIRE (load != nullptr);
+    REQUIRE (panelOrder < load->getExplicitFocusOrder());
+}
+
+// Hidden: writes the editor as it looks to <temp>/asampler-editor.png, to check
+// the layout without opening a host. Run with "[.snapshot]".
+TEST_CASE ("Editor snapshot", "[.snapshot]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    proc.loadFactoryKit (ASamplerProcessor::getFactoryKitNames().indexOf ("Starter Drums"));
+    ASamplerEditor editor (proc);
+    editor.setUiScale (1.0f, false);
+    editor.getSettingsPanel().showSection (editor.getSettingsPanel().getSections().indexOf ("Filter"));
+    editor.setVisible (true);
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("asampler-editor.png");
+    file.deleteFile();
+    juce::FileOutputStream out (file);
+    REQUIRE (out.openedOk());
+    juce::PNGImageFormat().writeImageToStream (editor.createComponentSnapshot (editor.getLocalBounds()), out);
+    out.flush();
+    WARN (file.getFullPathName());
+}
+
+TEST_CASE ("The Layers section is split into one page per layer", "[editor][settings][layers]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    for (int L = 1; L <= kNumLayers; ++L)
+        REQUIRE (panel.getSections().contains ("Layer " + juce::String (L)));
+    REQUIRE (panel.getSections().contains ("Layers"));
+
+    panel.showSection (panel.getSections().indexOf ("Layer 3"));
+    REQUIRE (panel.findControl ("Layer 3 Gain") != nullptr);
+    REQUIRE (panel.findControl ("Layer 2 Gain") == nullptr);
+
+    // Every control is on exactly one page.
+    int total = 0;
+    for (int s = 0; s < panel.getSections().size(); ++s)
+    {
+        panel.showSection (s);
+        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+            if (panel.findControl (ASamplerProcessor::getPadControlName (i)) != nullptr)
+                ++total;
+    }
+    REQUIRE (total == ASamplerProcessor::getNumPadControls());
 }

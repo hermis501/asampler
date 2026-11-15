@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "FilterMode.h"
+#include "HoldEnvelope.h"
 #include "Lfo.h"
 #include "LoopMode.h"
 #include "Saturation.h"
@@ -30,6 +31,13 @@ namespace asampler
         float    loopStartNorm = 0.0f;    // 0..1 of source length
         float    loopEndNorm   = 1.0f;    // must be > loopStartNorm after clamp
         juce::ADSR::Parameters adsr { 0.005f, 0.100f, 1.0f, 0.100f };
+        // Seconds the amp envelope stays at full level between attack and
+        // decay (0 = plain ADSR).
+        float holdSeconds = 0.0f;
+        // Loop while the note is held; on release, leave the loop and play
+        // on to the end of the window (the release tail) instead of looping
+        // until the envelope dies away.
+        bool  exitLoopOnRelease = false;
         // Mute/solo gate from the pad's per-pad bools, applied as an output
         // gain multiplier. 1.0 = pad sounds, 0.0 = pad silenced. Lives in
         // the config so newly triggered voices inherit the current gate, and
@@ -98,6 +106,7 @@ namespace asampler
         // and velocity modulation could not express.
         float filterEnvOctaves = 0.0f;
         juce::ADSR::Parameters filterEnvAdsr { 0.001f, 0.200f, 0.0f, 0.100f };
+        float filterEnvHoldSeconds = 0.0f;
 
         // Stereo shaping, applied last. `stereoWidth` scales the M/S side
         // signal: 0 = mono, 1 = unchanged, 2 = double width. `monoBelowHz`
@@ -163,6 +172,10 @@ namespace asampler
         void stop() noexcept;
 
         bool isActive() const noexcept { return active; }
+
+        // How far through its sample the voice is, 0..1 of the buffer it
+        // plays (for a playhead on the waveform). Audio thread only.
+        float getPlayFraction() const noexcept;
 
         // Live pitch-bend update (the global "pitch bend in semitones" the
         // processor maintains from MIDI 0xE0 messages). Re-derives pitchRatio
@@ -242,11 +255,11 @@ namespace asampler
         float lastSmoothedPan  = -2.0f;
         float lastCutoffSet    = -1.0f;
         float currentResonance = 0.707f;
-        juce::ADSR envelope;
+        HoldEnvelope envelope;
 
         // Second envelope, dedicated to the filter cutoff. Runs in parallel
         // with the amp envelope and is released at the same time.
-        juce::ADSR filterEnv;
+        HoldEnvelope filterEnv;
         float      filterEnvOctaves = 0.0f;
         bool       filterEnvActive  = false;
 
@@ -263,6 +276,8 @@ namespace asampler
         juce::dsp::StateVariableTPTFilter<float> filter;
         FilterMode filterMode = FilterMode::Off;
         LoopMode   loopMode   = LoopMode::Off;
+        bool       exitLoopOnRelease = false;
+        double     baseDirection     = 1.0;   // +1 forward, -1 reverse, as triggered
         int        loopStartIdx = 0;     // inclusive
         int        loopEndIdx   = 0;     // exclusive
 

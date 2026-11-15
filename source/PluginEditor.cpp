@@ -15,6 +15,16 @@ namespace asampler
         constexpr int kButtonWidth   = 180;
         constexpr int kStatusHeight  = 72;
         constexpr int kColumns       = 4;
+        constexpr int kLeftWidth     = kColumns * kPadWidth + (kColumns - 1) * kGap;   // 744
+        constexpr int kWaveHeight    = 180;
+
+       #if JUCE_WINDOWS
+        // The Applications (context menu) key, as JUCE's Windows key codes
+        // spell a raw virtual key (VK_APPS).
+        constexpr int kAppsKeyCode = 0x10000 | 0x5D;
+       #endif
+
+        const std::array<float, 6> kScales { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
 
         // MPC-style QWERTY layout: the bottom keyboard row is pads 1-4 and each
         // row above it steps up a bank of four, matching the pad grid.
@@ -81,17 +91,176 @@ namespace asampler
     void ASamplerEditor::PadButton::focusGained (FocusChangeType cause)
     {
         juce::TextButton::focusGained (cause);
+        repaint();
         if (onFocus)
             onFocus();
+    }
+
+    void ASamplerEditor::PadButton::focusLost (FocusChangeType cause)
+    {
+        juce::TextButton::focusLost (cause);
+        repaint();
+    }
+
+    void ASamplerEditor::PadButton::mouseDown (const juce::MouseEvent& e)
+    {
+        draggedOut = false;
+        popupClick = e.mods.isPopupMenu();
+        if (popupClick)
+        {
+            if (onContextMenu)
+                onContextMenu();
+            return;   // a right-click opens the menu, it doesn't play the pad
+        }
+        juce::TextButton::mouseDown (e);
+    }
+
+    void ASamplerEditor::PadButton::mouseDrag (const juce::MouseEvent& e)
+    {
+        if (popupClick || draggedOut)
+            return;
+        if (e.getDistanceFromDragStart() > 8 && onDragOut)
+        {
+            draggedOut = true;
+            setState (juce::Button::buttonNormal);
+            onDragOut();
+            return;
+        }
+        juce::TextButton::mouseDrag (e);
+    }
+
+    void ASamplerEditor::PadButton::mouseUp (const juce::MouseEvent& e)
+    {
+        if (popupClick || draggedOut)
+        {
+            // Neither a right-click nor a drag is a click on the pad.
+            popupClick = draggedOut = false;
+            setState (juce::Button::buttonNormal);
+            return;
+        }
+        juce::TextButton::mouseUp (e);
+    }
+
+    void ASamplerEditor::PadButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
+    {
+        using PC = ASamplerProcessor::PadContent;
+        auto r = getLocalBounds().toFloat().reduced (1.5f);
+
+        auto base = face.content == PC::Loaded  ? juce::Colour (0xff2c4a66)
+                  : face.content == PC::Missing ? juce::Colour (0xff6a3030)
+                                                : juce::Colour (0xff2a2e35);
+        if (face.muted) base = base.darker (0.5f).withMultipliedSaturation (0.4f);
+        if (isDown)      base = base.brighter (0.2f);
+        else if (isOver) base = base.brighter (0.08f);
+
+        g.setColour (base);
+        g.fillRoundedRectangle (r, 6.0f);
+
+        // Lights up when the pad plays, brighter for a harder hit.
+        if (flash > 0.0f)
+        {
+            g.setColour (juce::Colour (0xffffc860).withAlpha (juce::jlimit (0.0f, 0.7f, flash * 0.7f)));
+            g.fillRoundedRectangle (r, 6.0f);
+        }
+
+        const bool selected = getToggleState();
+        if (hasKeyboardFocus (false))
+        {
+            g.setColour (juce::Colour (0xff7cc4ff));
+            g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, 3.0f);
+        }
+        else
+        {
+            g.setColour (selected ? juce::Colours::white : juce::Colours::white.withAlpha (0.12f));
+            g.drawRoundedRectangle (r, 6.0f, selected ? 2.0f : 1.0f);
+        }
+
+        auto inner = r.reduced (8.0f, 5.0f);
+        auto top = inner.removeFromTop (18.0f);
+        g.setColour (juce::Colours::white.withAlpha (face.muted ? 0.5f : 0.95f));
+        g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        g.drawText (juce::String (face.number), top, juce::Justification::centredLeft, false);
+
+        // Mute / solo badges, top right.
+        auto badges = top;
+        auto badge = [&] (const juce::String& t, juce::Colour c)
+        {
+            auto b = badges.removeFromRight (18.0f).reduced (1.0f);
+            g.setColour (c);
+            g.fillRoundedRectangle (b, 3.0f);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            g.drawText (t, b, juce::Justification::centred, false);
+            badges.removeFromRight (2.0f);
+        };
+        if (face.soloed) badge ("S", juce::Colour (0xffe8c45f));
+        if (face.muted)  badge ("M", juce::Colour (0xffe86a6a));
+
+        // The computer key that plays it, bottom right.
+        auto bottom = inner.removeFromBottom (16.0f);
+        if (face.key.isNotEmpty())
+        {
+            auto k = bottom.removeFromRight (16.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.15f));
+            g.fillRoundedRectangle (k, 3.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.7f));
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawText (face.key, k, juce::Justification::centred, false);
+        }
+
+        g.setColour (face.content == PC::BuiltIn ? juce::Colours::white.withAlpha (0.45f)
+                                                 : juce::Colours::white.withAlpha (face.muted ? 0.5f : 0.9f));
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawFittedText (face.name, inner.getUnion (bottom).toNearestInt(), juce::Justification::topLeft, 2, 0.8f);
+    }
+
+    // ---- Output meter -------------------------------------------------------
+
+    void ASamplerEditor::OutputMeter::setLevel (float linear)
+    {
+        // Falls back gently, so a short hit is still seen.
+        level = juce::jmax (linear, level * 0.85f);
+        if (level < 1.0e-4f) level = 0.0f;
+        if (std::abs (level - shown) > 0.002f)
+        {
+            shown = level;
+            repaint();
+        }
+    }
+
+    void ASamplerEditor::OutputMeter::paint (juce::Graphics& g)
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colour (0xff15191e));
+        g.fillRoundedRectangle (r, 3.0f);
+
+        const float db = juce::Decibels::gainToDecibels (level, -60.0f);
+        const float t  = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
+        auto bar = r.reduced (2.0f);
+        bar = bar.withWidth (bar.getWidth() * t);
+        g.setColour (level >= 0.99f ? juce::Colour (0xffe86a6a)
+                                    : db > -6.0f ? juce::Colour (0xffe8c45f) : juce::Colour (0xff6ad48a));
+        g.fillRoundedRectangle (bar, 2.0f);
     }
 
     // ---- Construction -------------------------------------------------------
 
     ASamplerEditor::ASamplerEditor (ASamplerProcessor& proc)
         : juce::AudioProcessorEditor (proc),
-          processor (proc)
+          processor (proc),
+          lookAndFeel (juce::LookAndFeel_V4::getDarkColourScheme())
     {
         setWantsKeyboardFocus (true);
+
+        // A modest dark look; JUCE's own widgets, only recoloured.
+        lookAndFeel.setColour (juce::ResizableWindow::backgroundColourId, juce::Colour (0xff1d2127));
+        lookAndFeel.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2b3139));
+        lookAndFeel.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff2b3139));
+        lookAndFeel.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xff5fb0e8));
+        lookAndFeel.setColour (juce::Slider::thumbColourId, juce::Colour (0xff7cc4ff));
+        setLookAndFeel (&lookAndFeel);
+
+        addAndMakeVisible (content);
 
         auto setupLabel = [this] (juce::Label& l, const juce::String& text, float size, bool bold)
         {
@@ -100,7 +269,7 @@ namespace asampler
             l.setJustificationType (juce::Justification::centredLeft);
             l.setAccessible (true);
             l.setTitle (text);
-            addAndMakeVisible (l);
+            content.addAndMakeVisible (l);
         };
 
         const auto version = "ASampler " + ASamplerProcessor::getVersionString();
@@ -120,7 +289,16 @@ namespace asampler
             pad->onFocus    = [this, i] { if (selectedPad() != i) selectPad (i, false); };
             pad->onKeyFirst = [this] (const juce::KeyPress& k) { return handleModeKey (k); };
             pad->onArrowKey = [this, i] (const juce::KeyPress& k) { return handleGridArrow (i, k); };
-            addAndMakeVisible (pad.get());
+            pad->onContextMenu = [this, i] { selectPad (i, false); showPadMenu (i); };
+            pad->onDragOut  = [this, i]
+            {
+                if (padButtons[(std::size_t) i] != nullptr)
+                    startDragging ("pad:" + juce::String (i), padButtons[(std::size_t) i].get(),
+                                   juce::ScaledImage(), true);
+            };
+            pad->setTooltip ("Click to play and select. Right-click for its menu. Drop audio files here "
+                             "to load them; drag the pad out to save it as audio.");
+            content.addAndMakeVisible (pad.get());
             padButtons[(std::size_t) i] = std::move (pad);
         }
 
@@ -177,6 +355,12 @@ namespace asampler
                    "Apply time-stretch and formant settings now instead of waiting for the background render.");
         addButton (renderFormantsButton, [this] { renderFormantsSelected(); },
                    "Build the per-note formant correction now.");
+        addButton (tuneButton,           [this] { tuneSelected(); },
+                   "Detect the sample's pitch and set the pad's Pitch so it plays in tune: on the nearest "
+                   "note, or on its root key in Keyboard mode. Undo restores it.");
+        addButton (moreButton,           [this] { showPadMenu (selectedPad()); },
+                   "Every action for the selected pad, in a menu. Shift F10, the Applications key or a "
+                   "right-click on a pad open it too.");
 
         setupLabel (kitLabel, "Kit", 14.0f, true);
         addButton (undoButton,       [this] { processor.undoLastAction(); });
@@ -186,7 +370,8 @@ namespace asampler
                    "template of settings only.");
         addButton (loadKitButton,    [this] { loadKit(); });
         addButton (factoryKitButton, [this] { chooseFactoryKit(); },
-                   "Load a built-in starting point. Changes settings only, not samples.");
+                   "Load a built-in starting point. Starter Drums also puts eight built-in sounds on pads 1 to 8; "
+                   "the others change settings only.");
         addButton (relinkButton,     [this] { relink(); },
                    "Search a folder for samples this project could not find.");
         addButton (clearAllButton,   [this] { clearAll(); },
@@ -194,11 +379,81 @@ namespace asampler
         addButton (exportMidiButton, [this] { exportMidi(); },
                    "Write a MIDI file with one note per slice, to import into your project.");
         addButton (helpButton,       [this] { showHelp(); });
+        addButton (sizeButton,       [this] { showSizeMenu(); },
+                   "Make the window bigger or smaller. Dragging its corner works too.");
+
+        // Used less often: reachable from the pad menu (and their shortcuts),
+        // not as buttons, so Tab gets through the window quickly.
+        for (auto* b : { tryPrevButton.get(), tryNextButton.get(), keepTryButton.get(), trimButton.get(),
+                         renameButton.get(), noteLearnButton.get(), applyButton.get(), resetButton.get(),
+                         normaliseButton.get(), spreadButton.get(), snapButton.get(), grabButton.get(),
+                         renderStretchButton.get(), renderFormantsButton.get(), tuneButton.get() })
+            b->setVisible (false);
 
         setupLabel (statusLabel, "Ready. Press F1 for keyboard help.", 14.0f, false);
         statusLabel.setTitle ("Status");
         statusLabel.setJustificationType (juce::Justification::topLeft);
         statusLabel.setMinimumHorizontalScale (1.0f);
+
+        settingsPanel = std::make_unique<ParameterPanel> (processor);
+        settingsPanel->setTitle ("Pad settings");
+        settingsPanel->onKeyFirst = [this] (const juce::KeyPress& k) { return handleModeKey (k); };
+        content.addAndMakeVisible (*settingsPanel);
+
+        browser = std::make_unique<SampleBrowser> (processor);
+        browser->setTitle ("Sample browser");
+        browser->onKeyFirst = [this] (const juce::KeyPress& k) { return handleModeKey (k); };
+        browser->onLoad = [this] (const juce::File& f)
+        {
+            processor.loadSampleForPadLayerAsync (selectedPad(), processor.getCurrentEditLayer(), f);
+        };
+        browser->onFolderChanged = [this] (const juce::File& f)
+        {
+            uiSettings->get().setValue ("browserFolder", f.getFullPathName());
+        };
+        content.addChildComponent (*browser);
+
+        addButton (browserButton, [this] { showBrowser (! browserShown); },
+                   "Swap the pad settings for a list of the samples in a folder, and back.");
+
+        waveform = std::make_unique<WaveformView> (processor);
+        content.addAndMakeVisible (*waveform);
+        content.addAndMakeVisible (meter);
+
+        for (int i = 0; i < kNumPads; ++i)
+            lastHitCount[(std::size_t) i] = processor.getPadHitCount (i);
+
+        // Tab order: what the user reaches, in the order the header describes,
+        // regardless of where it sits on screen.
+        {
+            int order = 1;
+            auto next = [&order] (juce::Component& c) { c.setExplicitFocusOrder (order++); };
+            next (heading);
+            next (gridLabel);
+            next (*bankButton);
+            for (auto& pad : padButtons)
+                next (*pad);
+            next (*settingsPanel);
+            next (*browser);         // shown instead of the settings, never with them
+            next (*browserButton);
+            next (padActionsLabel);
+            for (auto* b : { loadButton.get(), prevButton.get(), nextButton.get(), playButton.get(),
+                             editStartButton.get(), editEndButton.get(), describeButton.get(),
+                             chopButton.get(), copyButton.get(), pasteButton.get(), bounceButton.get(),
+                             moreButton.get(),
+                             // hidden, in the pad menu:
+                             tryPrevButton.get(), tryNextButton.get(), keepTryButton.get(), trimButton.get(),
+                             renameButton.get(), noteLearnButton.get(), applyButton.get(), resetButton.get(),
+                             normaliseButton.get(), spreadButton.get(), snapButton.get(), grabButton.get(),
+                             renderStretchButton.get(), renderFormantsButton.get(), tuneButton.get() })
+                next (*b);
+            next (kitLabel);
+            for (auto* b : { undoButton.get(), redoButton.get(), saveKitButton.get(), loadKitButton.get(),
+                             factoryKitButton.get(), relinkButton.get(), clearAllButton.get(),
+                             exportMidiButton.get(), helpButton.get(), sizeButton.get() })
+                next (*b);
+            next (statusLabel);
+        }
 
         refreshLabels();
         processor.addChangeListener (this);
@@ -208,17 +463,17 @@ namespace asampler
         // the ~2,900 parameters.
         startTimer (250);
 
-        const int width = kPadding * 2 + kColumns * kPadWidth + (kColumns - 1) * kGap;
-        const int buttonsPerRow = (width - 2 * kPadding + kGap) / (kButtonWidth + kGap);
-        const int padActionRows = (25 + buttonsPerRow - 1) / buttonsPerRow;
-        const int kitRows       = (9 + buttonsPerRow - 1) / buttonsPerRow;
+        // The window keeps its shape when resized; the scale last chosen on
+        // this computer is where it starts.
+        setResizable (true, true);
+        setResizeLimits (juce::roundToInt (kDesignWidth * 0.6), juce::roundToInt (kDesignHeight * 0.6),
+                         juce::roundToInt (kDesignWidth * 2.5), juce::roundToInt (kDesignHeight * 2.5));
+        if (auto* c = getConstrainer())
+            c->setFixedAspectRatio ((double) kDesignWidth / (double) kDesignHeight);
 
-        setSize (width,
-                 kPadding + kHeadingHeight + kGap
-                   + kLabelHeight + kGap + 4 * kPadHeight + 3 * kGap + kGap
-                   + kLabelHeight + padActionRows * (kRowHeight + kGap)
-                   + kLabelHeight + kitRows * (kRowHeight + kGap)
-                   + kStatusHeight + kPadding);
+        const auto stored = (float) uiSettings->get().getDoubleValue ("scale", 1.0);
+        setUiScale (std::isfinite (stored) ? stored : 1.0f, false);
+        persistScale = true;   // from here on, a resize by the user is remembered
     }
 
     ASamplerEditor::~ASamplerEditor()
@@ -227,6 +482,9 @@ namespace asampler
         for (const auto& [code, note] : heldPadKeys)
             processor.queueLiveNote (note, false);
         processor.removeChangeListener (this);
+        if (browserShown)
+            processor.stopFilePreview();
+        setLookAndFeel (nullptr);
     }
 
     juce::TextButton& ASamplerEditor::addButton (std::unique_ptr<juce::TextButton>& slot,
@@ -236,9 +494,16 @@ namespace asampler
         slot = std::make_unique<juce::TextButton>();
         slot->setWantsKeyboardFocus (true);
         if (description.isNotEmpty())
+        {
             slot->setDescription (description);
+            // The same words on mouse hover. For a button JUCE keeps the
+            // tooltip out of what the screen reader reads, so nothing is
+            // spoken twice. (Sliders and combo boxes would read it as help
+            // text, which is why they don't get one.)
+            slot->setTooltip (description);
+        }
         slot->onClick = std::move (onClick);
-        addAndMakeVisible (slot.get());
+        content.addAndMakeVisible (slot.get());
         return *slot;
     }
 
@@ -249,11 +514,51 @@ namespace asampler
         g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
     }
 
+    void ASamplerEditor::setUiScale (float scale, bool persist)
+    {
+        scale = juce::jlimit (0.6f, 2.5f, scale);
+        const bool wasPersisting = persistScale;
+        persistScale = persist;
+        setSize (juce::roundToInt (kDesignWidth * scale), juce::roundToInt (kDesignHeight * scale));
+        resized();   // the same size again still has to apply the scale
+        persistScale = wasPersisting;
+    }
+
     void ASamplerEditor::resized()
     {
-        auto area = getLocalBounds().reduced (kPadding);
+        const float scale = getWidth() > 0 ? (float) getWidth() / (float) kDesignWidth : 1.0f;
+        uiScale = scale;
+        content.setBounds (0, 0, kDesignWidth, kDesignHeight);
+        content.setTransform (juce::AffineTransform::scale (scale));
+        layoutContent();
 
-        heading.setBounds (area.removeFromTop (kHeadingHeight));
+        if (persistScale)
+            uiSettings->get().setValue ("scale", (double) scale);
+        if (sizeButton != nullptr)
+            setButtonLabel (*sizeButton, "Window size... (" + juce::String (juce::roundToInt (scale * 100.0f)) + "%)");
+    }
+
+    void ASamplerEditor::layoutContent()
+    {
+        auto area = juce::Rectangle<int> (0, 0, kDesignWidth, kDesignHeight).reduced (kPadding);
+
+        // Right column: the waveform, then the settings or the browser.
+        {
+            auto right = area.removeFromRight (area.getWidth() - kLeftWidth - kPadding);
+            waveform->setBounds (right.removeFromTop (kWaveHeight));
+            right.removeFromTop (kGap);
+            browserButton->setBounds (right.removeFromBottom (kRowHeight).removeFromLeft (300));
+            right.removeFromBottom (kGap);
+            settingsPanel->setBounds (right);
+            browser->setBounds (right);
+        }
+        area = area.withWidth (kLeftWidth);
+
+        {
+            auto line = area.removeFromTop (kHeadingHeight);
+            meter.setBounds (line.removeFromRight (kButtonWidth).withSizeKeepingCentre (kButtonWidth, 10));
+            heading.setBounds (line);
+        }
         area.removeFromTop (kGap);
 
         {
@@ -286,6 +591,8 @@ namespace asampler
             auto row = area.removeFromTop (kRowHeight);
             for (auto* b : buttons)
             {
+                if (! b->isVisible())
+                    continue;
                 if (row.getWidth() < kButtonWidth)
                 {
                     area.removeFromTop (kGap);
@@ -297,19 +604,15 @@ namespace asampler
             area.removeFromTop (kGap);
         };
 
-        flow (padActionsLabel, { loadButton.get(), prevButton.get(), nextButton.get(),
-                                 tryPrevButton.get(), tryNextButton.get(), keepTryButton.get(), playButton.get(),
-                                 editStartButton.get(), editEndButton.get(), trimButton.get(),
-                                 describeButton.get(), renameButton.get(), noteLearnButton.get(), applyButton.get(),
-                                 resetButton.get(), chopButton.get(), copyButton.get(), pasteButton.get(),
-                                 normaliseButton.get(), spreadButton.get(), snapButton.get(), bounceButton.get(),
-                                 grabButton.get(), renderStretchButton.get(), renderFormantsButton.get() });
+        flow (padActionsLabel, { loadButton.get(), prevButton.get(), nextButton.get(), playButton.get(),
+                                 editStartButton.get(), editEndButton.get(), describeButton.get(), chopButton.get(),
+                                 copyButton.get(), pasteButton.get(), bounceButton.get(), moreButton.get() });
 
         flow (kitLabel, { undoButton.get(), redoButton.get(), saveKitButton.get(), loadKitButton.get(),
                           factoryKitButton.get(), relinkButton.get(), clearAllButton.get(),
-                          exportMidiButton.get(), helpButton.get() });
+                          exportMidiButton.get(), helpButton.get(), sizeButton.get() });
 
-        statusLabel.setBounds (area.removeFromTop (kStatusHeight));
+        statusLabel.setBounds (area);
     }
 
     void ASamplerEditor::visibilityChanged()
@@ -464,6 +767,7 @@ namespace asampler
                     case 'v': pasteFiles();                    return true;
                     case 'r': processor.toggleReaperRecord();  return true;
                     case 'g': grabReaperItem();                return true;
+                    case 'b': showBrowser (! browserShown);    return true;
                     default: break;
                 }
             }
@@ -471,6 +775,12 @@ namespace asampler
         }
 
         if (key == juce::KeyPress::F1Key) { showHelp(); return true; }
+        if (key.getKeyCode() == juce::KeyPress::F10Key && mods.isShiftDown()
+            && ! mods.isCommandDown() && ! mods.isAltDown())
+        {
+            showPadMenu (selectedPad());
+            return true;
+        }
         if (key == juce::KeyPress::F2Key) { renameSelected(); return true; }
 
         if (mods.isShiftDown() && ! mods.isCommandDown() && ! mods.isAltDown())
@@ -495,6 +805,7 @@ namespace asampler
                 case 'p': browse (-1);              return true;
                 case 'i': describeSelected();       return true;
                 case 'b': bounceSelected();         return true;
+                case 'u': tuneSelected();           return true;
                 case 't': editSlicePoint (false);   return true;
                 case 'o': editSlicePoint (true);    return true;
                 case 'k': processor.armNoteLearn (selectedPad(), ASamplerProcessor::NoteLearnTarget::Note);
@@ -535,6 +846,19 @@ namespace asampler
     bool ASamplerEditor::keyStateChanged (bool isKeyDown)
     {
         juce::ignoreUnused (isKeyDown);
+
+       #if JUCE_WINDOWS
+        // The Applications key reaches JUCE only as a key-state change.
+        const bool apps = juce::KeyPress::isKeyCurrentlyDown (kAppsKeyCode);
+        if (apps && ! appsKeyDown)
+        {
+            appsKeyDown = true;
+            showPadMenu (selectedPad());
+            return true;
+        }
+        appsKeyDown = apps;
+       #endif
+
         for (auto it = heldPadKeys.begin(); it != heldPadKeys.end();)
         {
             if (! juce::KeyPress::isKeyCurrentlyDown (it->first))
@@ -767,10 +1091,12 @@ namespace asampler
 
     void ASamplerEditor::filesDropped (const juce::StringArray& paths, int x, int y)
     {
-        // Onto the pad under the drop, else the selected pad.
+        // Onto the pad under the drop, else the selected pad. The pads live
+        // in the scaled content, so the point is converted first.
         int pad = selectedPad();
+        const auto where = content.getLocalPoint (this, juce::Point<int> (x, y));
         for (int i = 0; i < kNumPads; ++i)
-            if (padButtons[(std::size_t) i]->isVisible() && padButtons[(std::size_t) i]->getBounds().contains (x, y))
+            if (padButtons[(std::size_t) i]->isVisible() && padButtons[(std::size_t) i]->getBounds().contains (where))
                 pad = i;
 
         selectPad (pad, false);
@@ -857,7 +1183,7 @@ namespace asampler
         menu.addSubMenu ("To this bank, pads " + bankRange (bank), scopeMenu (1));
 
         juce::Component::SafePointer<ASamplerEditor> safe (this);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (applyButton.get()),
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuTarget (applyButton.get())),
             [safe, pad, bank, sections] (int result)
             {
                 if (safe == nullptr || result <= 0) return;
@@ -882,7 +1208,7 @@ namespace asampler
         menu.addItem (3, "High Note");
 
         juce::Component::SafePointer<ASamplerEditor> safe (this);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (noteLearnButton.get()),
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuTarget (noteLearnButton.get())),
             [safe, pad] (int result)
             {
                 if (safe == nullptr || result <= 0) return;
@@ -928,6 +1254,7 @@ namespace asampler
     void ASamplerEditor::pasteSelected()           { processor.pastePad (selectedPad(), true); }
     void ASamplerEditor::snapSelected()            { processor.snapPadWindowToTransients (selectedPad()); }
     void ASamplerEditor::bounceSelected()          { processor.bouncePad (selectedPad()); }
+    void ASamplerEditor::tuneSelected()            { processor.tunePad (selectedPad()); }
 
     void ASamplerEditor::normaliseSelected()
     {
@@ -1013,7 +1340,9 @@ namespace asampler
         juce::PopupMenu menu;
         const auto names = ASamplerProcessor::getFactoryKitNames();
         for (int i = 0; i < names.size(); ++i)
-            menu.addItem (i + 1, names[i]);
+            menu.addItem (i + 1, names[i] == "Starter Drums"
+                                     ? names[i] + " (replaces the samples on pads 1 to 8)"
+                                     : names[i]);
 
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (factoryKitButton.get()),
             [this] (int result)
@@ -1100,11 +1429,19 @@ namespace asampler
                + " 1, with Shift 100, Enter keeps, Escape restores. "
                "K learns the pad's note from the next MIDI note. F2 renames the pad. "
                "I describes the sample. B bounces the pad to the next empty pad. "
+               "U tunes the pad to the sample's detected pitch. "
                + kCmd + " S saves a kit, " + kCmd + " O opens one. "
                + kCmd + " Z undoes, " + kCmd + " Y redoes. "
                "In REAPER, " + kCmd + " R toggles record and " + kCmd + " G grabs the selected item onto the pad. "
                "Z X C V, A S D F, Q W E R and 1 2 3 4 play the 16 pads of the current bank while held, and "
                "send the notes to the plugin's MIDI output; with Shift they say what the pad holds. "
+               "After the pads, Tab reaches the selected pad's settings: choose a section from the list, "
+               "then Tab through its knobs, lists and checkboxes. Arrows change a knob by 1 percent, "
+               "with Shift 10, Home and End go to the ends, and Enter lets you type a value. "
+               + kCmd + " B swaps the settings for the sample browser: arrows move through a folder and "
+               "play each file, Enter loads it onto the selected pad or opens a folder, Backspace goes up, "
+               "and a letter jumps to the next name starting with it. "
+               "Shift F10 or the Applications key opens the pad menu with every action for the pad. "
                "Every setting is also a parameter in the host's parameter list; "
                "the Focus group there follows the selected pad.";
     }
@@ -1126,6 +1463,11 @@ namespace asampler
         const int layer = processor.getCurrentEditLayer();
         const auto padN = "Pad " + juce::String (sel + 1);
         const auto layerSuffix = layer > 0 ? ", layer " + juce::String (layer + 1) : juce::String();
+
+        if (settingsPanel != nullptr)
+            settingsPanel->setPad (sel);
+        if (waveform != nullptr)
+            waveform->setPad (sel);
 
         const auto gridText = "Pads, bank " + bankName (bank) + ", pads " + bankRange (bank)
                             + ". Arrow keys move, Page Up and Page Down switch bank, Space plays.";
@@ -1159,10 +1501,19 @@ namespace asampler
             // make it silent.
             const auto padName = processor.getPadName (i);
             const auto title   = padTitle (i);
-            const auto text    = juce::String (i + 1) + "  "
-                               + (padName.isNotEmpty() ? padName : processor.getPadSampleDisplayName (i));
+            const auto shown   = padName.isNotEmpty() ? padName : processor.getPadSampleDisplayName (i);
+            const auto text    = juce::String (i + 1) + "  " + shown;
             if (b.getButtonText() != text) b.setButtonText (text);
             if (b.getTitle() != title)     b.setTitle (title);
+
+            PadButton::Face face;
+            face.number  = i + 1;
+            face.name    = shown == "default" ? juce::String ("built-in tone") : shown;
+            face.key     = padKeyName (i);
+            face.content = processor.getPadContent (i);
+            face.muted   = processor.isPadMuted (i);
+            face.soloed  = processor.isPadSoloed (i);
+            b.setFace (face);
             b.setToggleState (i == sel, juce::dontSendNotification);
 
             // Keep the grid's single Tab stop on the selected pad, including
@@ -1209,6 +1560,10 @@ namespace asampler
         setButtonLabel (*grabButton,     "Grab REAPER item onto " + padN + " (" + kCmd + "+G)");
         setButtonLabel (*renderStretchButton,  "Render " + padN + " stretch");
         setButtonLabel (*renderFormantsButton, "Render " + padN + " formants");
+        setButtonLabel (*tuneButton,     "Tune " + padN + " (U)");
+        setButtonLabel (*moreButton,     "More actions for " + padN + "... (Shift+F10)");
+        setButtonLabel (*browserButton,  browserShown ? "Show pad settings (" + kCmd + "+B)"
+                                                      : "Show sample browser (" + kCmd + "+B)");
 
         setButtonLabel (*undoButton,       "Undo (" + kCmd + "+Z)");
         setButtonLabel (*redoButton,       "Redo (" + kCmd + "+Y)");
@@ -1276,6 +1631,283 @@ namespace asampler
         announcer.announce (message, isProblem);
     }
 
+    // ---- Browser, pad menu, window size, moving parts ----------------------------
+
+    void ASamplerEditor::showBrowser (bool shouldShow)
+    {
+        if (shouldShow && ! browserOpened)
+        {
+            // First time: the folder used last, else the selected pad's
+            // sample folder, else the Music folder.
+            browserOpened = true;
+            juce::File start (uiSettings->get().getValue ("browserFolder"));
+            juce::File select;
+            if (! start.isDirectory())
+            {
+                const auto current = processor.getPadSampleFile (selectedPad());
+                start  = current.getParentDirectory();
+                select = current;
+            }
+            if (! start.isDirectory())
+                start = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+            browser->setFolder (start, select);
+        }
+
+        if (! shouldShow && browserShown)
+            processor.stopFilePreview();
+
+        browserShown = shouldShow;
+        browser->setVisible (shouldShow);
+        settingsPanel->setVisible (! shouldShow);
+        refreshLabels();
+
+        lastAnnounced.clear();
+        if (shouldShow)
+        {
+            browser->getList().grabKeyboardFocus();
+            announce ("Sample browser, " + browser->getList().getTitle()
+                      + ". Enter loads onto Pad " + juce::String (selectedPad() + 1) + ".");
+        }
+        else
+        {
+            settingsPanel->getSectionBox().grabKeyboardFocus();
+            announce ("Pad settings");
+        }
+    }
+
+    juce::Component* ASamplerEditor::menuTarget (juce::Component* preferred)
+    {
+        if (preferred != nullptr && preferred->isShowing())
+            return preferred;
+        if (auto* pad = padButtons[(std::size_t) selectedPad()].get(); pad != nullptr && pad->isShowing())
+            return pad;
+        return this;
+    }
+
+    namespace
+    {
+        constexpr int kSaveAudioItem = 1000;
+    }
+
+    juce::PopupMenu ASamplerEditor::buildPadMenu (int padIndex)
+    {
+        if (padIndex != selectedPad())
+            selectPad (padIndex, false);
+        refreshLabels();
+
+        // Item id = 1 + index in this list; the labels are the buttons' own,
+        // so the menu says exactly what each would do, shortcut included.
+        auto add = [] (juce::PopupMenu& m, juce::TextButton* b, int id, bool enabled = true)
+        {
+            m.addItem (id, b->getButtonText(), enabled);
+        };
+
+        juce::PopupMenu menu;
+        menu.addSectionHeader (padTitle (padIndex));
+
+        const auto buttons = std::vector<juce::TextButton*> {
+            loadButton.get(), prevButton.get(), nextButton.get(), tryPrevButton.get(), tryNextButton.get(),
+            keepTryButton.get(), resetButton.get(),
+            playButton.get(), editStartButton.get(), editEndButton.get(), trimButton.get(), snapButton.get(),
+            describeButton.get(), renameButton.get(), noteLearnButton.get(),
+            copyButton.get(), pasteButton.get(), applyButton.get(), normaliseButton.get(), spreadButton.get(),
+            chopButton.get(), bounceButton.get(), renderStretchButton.get(), renderFormantsButton.get(),
+            grabButton.get(),
+            // appended, so the ids above stay put; shown in Play and edit
+            tuneButton.get() };
+
+        juce::PopupMenu sample, edit, pads, render;
+        for (int i = 0; i < (int) buttons.size(); ++i)
+        {
+            auto* b = buttons[(std::size_t) i];
+            const int id = i + 1;
+            if (b == tuneButton.get()) add (edit, b, id);
+            else if (i <= 6)  add (sample, b, id, b != keepTryButton.get() || processor.isPreviewing (padIndex));
+            else if (i <= 14) add (edit, b, id);
+            else if (i <= 19) add (pads, b, id);
+            else              add (render, b, id, b != grabButton.get() || processor.getReaperApi().canGrabItems());
+        }
+        render.addItem (kSaveAudioItem, "Save " + juce::String ("Pad ") + juce::String (padIndex + 1)
+                                          + " as audio file...");
+
+        menu.addSubMenu ("Sample", sample);
+        menu.addSubMenu ("Play and edit", edit);
+        menu.addSubMenu ("Copy and apply", pads);
+        menu.addSubMenu ("Chop, bounce and render", render);
+        return menu;
+    }
+
+    void ASamplerEditor::runPadMenuItem (int itemId)
+    {
+        if (itemId == kSaveAudioItem)
+        {
+            savePadAudioAs();
+            return;
+        }
+
+        const auto buttons = std::vector<juce::TextButton*> {
+            loadButton.get(), prevButton.get(), nextButton.get(), tryPrevButton.get(), tryNextButton.get(),
+            keepTryButton.get(), resetButton.get(),
+            playButton.get(), editStartButton.get(), editEndButton.get(), trimButton.get(), snapButton.get(),
+            describeButton.get(), renameButton.get(), noteLearnButton.get(),
+            copyButton.get(), pasteButton.get(), applyButton.get(), normaliseButton.get(), spreadButton.get(),
+            chopButton.get(), bounceButton.get(), renderStretchButton.get(), renderFormantsButton.get(),
+            grabButton.get(),
+            // appended, so the ids above stay put; shown in Play and edit
+            tuneButton.get() };
+
+        if (juce::isPositiveAndBelow (itemId - 1, (int) buttons.size()))
+            if (auto* b = buttons[(std::size_t) (itemId - 1)]; b != nullptr && b->onClick)
+                b->onClick();
+    }
+
+    void ASamplerEditor::showPadMenu (int padIndex)
+    {
+        auto menu = buildPadMenu (padIndex);
+        auto* target = padButtons[(std::size_t) padIndex]->isShowing()
+                         ? static_cast<juce::Component*> (padButtons[(std::size_t) padIndex].get())
+                         : static_cast<juce::Component*> (this);
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
+            [safe] (int result)
+            {
+                if (safe == nullptr)
+                    return;
+                // The key's release went to the menu, not to us.
+                safe->appsKeyDown = false;
+                if (result > 0)
+                    safe->runPadMenuItem (result);
+            });
+    }
+
+    void ASamplerEditor::savePadAudioAs()
+    {
+        const int pad = selectedPad();
+        fileChooser = std::make_unique<juce::FileChooser> (
+            "Save Pad " + juce::String (pad + 1) + " as audio",
+            juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                .getChildFile (processor.getPadAudioFileStem (pad) + ".wav"),
+            "*.wav");
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting,
+            [safe, pad] (const juce::FileChooser& fc)
+            {
+                const auto file = fc.getResult();
+                if (safe != nullptr && file != juce::File{})
+                    safe->processor.savePadAudio (pad, file.withFileExtension ("wav"));
+            });
+    }
+
+    void ASamplerEditor::showSizeMenu()
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Window size");
+        for (int i = 0; i < (int) kScales.size(); ++i)
+        {
+            const bool current = std::abs (kScales[(std::size_t) i] - uiScale) < 0.01f;
+            menu.addItem (i + 1, juce::String (juce::roundToInt (kScales[(std::size_t) i] * 100.0f)) + "%",
+                          true, current);
+        }
+
+        juce::Component::SafePointer<ASamplerEditor> safe (this);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (menuTarget (sizeButton.get())),
+            [safe] (int result)
+            {
+                if (safe == nullptr || result <= 0) return;
+                safe->setUiScale (kScales[(std::size_t) (result - 1)], true);
+                safe->lastAnnounced.clear();
+                safe->announce ("Window size " + juce::String (juce::roundToInt (safe->uiScale * 100.0f)) + "%");
+            });
+    }
+
+    bool ASamplerEditor::isInterestedInDragSource (const SourceDetails& details)
+    {
+        return details.description.toString().startsWith ("file:");
+    }
+
+    void ASamplerEditor::itemDropped (const SourceDetails& details)
+    {
+        const auto desc = details.description.toString();
+        if (! desc.startsWith ("file:"))
+            return;
+
+        // Only onto a pad; a drop anywhere else is a drag that went nowhere.
+        const auto where = content.getLocalPoint (this, details.localPosition.toInt());
+        for (int i = 0; i < kNumPads; ++i)
+        {
+            auto& b = *padButtons[(std::size_t) i];
+            if (b.isVisible() && b.getBounds().contains (where))
+            {
+                selectPad (i, false);
+                loadFiles (i, { juce::File (desc.fromFirstOccurrenceOf ("file:", false, false)) });
+                return;
+            }
+        }
+    }
+
+    bool ASamplerEditor::shouldDropFilesWhenDraggedExternally (const SourceDetails& details,
+                                                                juce::StringArray& files, bool& canMoveFiles)
+    {
+        canMoveFiles = false;
+        const auto desc = details.description.toString();
+
+        if (desc.startsWith ("file:"))
+        {
+            files.add (desc.fromFirstOccurrenceOf ("file:", false, false));
+            return true;
+        }
+
+        if (desc.startsWith ("pad:"))
+        {
+            // Rendered now, as a bounce would be, into a folder kept for the
+            // purpose: the host copies or references the file once dropped.
+            const int pad = desc.fromFirstOccurrenceOf ("pad:", false, false).getIntValue();
+            const auto file = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                                  .getChildFile ("ASampler").getChildFile ("exports")
+                                  .getChildFile (processor.getPadAudioFileStem (pad) + ".wav");
+            if (! processor.savePadAudio (pad, file, false))
+                return false;
+            files.add (file.getFullPathName());
+            return true;
+        }
+        return false;
+    }
+
+    void ASamplerEditor::frame()
+    {
+        if (waveform != nullptr && waveform->isShowing())
+            waveform->tick();
+
+        meter.setLevel (processor.takeOutputPeak());
+
+        const int bank = currentBank();
+        for (int i = bank * kPadsPerBank; i < (bank + 1) * kPadsPerBank && i < kNumPads; ++i)
+        {
+            auto& pad = *padButtons[(std::size_t) i];
+            const auto count = processor.getPadHitCount (i);
+            float level = pad.getFlash();
+            if (count != lastHitCount[(std::size_t) i])
+            {
+                lastHitCount[(std::size_t) i] = count;
+                level = 0.35f + 0.65f * processor.getPadHitVelocity (i);
+            }
+            else
+            {
+                level *= 0.88f;
+                if (level < 0.02f) level = 0.0f;
+            }
+            pad.setFlash (level);
+        }
+    }
+
+    float ASamplerEditor::getPadFlash (int padIndex) const
+    {
+        return juce::isPositiveAndBelow (padIndex, kNumPads) ? padButtons[(std::size_t) padIndex]->getFlash() : 0.0f;
+    }
+
     // ---- Test hooks -----------------------------------------------------------
 
     juce::Button* ASamplerEditor::getPadButton (int padIndex) const
@@ -1286,7 +1918,7 @@ namespace asampler
 
     juce::Button* ASamplerEditor::findButtonByTitlePrefix (const juce::String& prefix) const
     {
-        for (auto* child : getChildren())
+        for (auto* child : content.getChildren())
             if (auto* b = dynamic_cast<juce::Button*> (child))
                 if (b->getTitle().startsWith (prefix))
                     return b;

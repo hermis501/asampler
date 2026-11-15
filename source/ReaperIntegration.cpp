@@ -41,9 +41,21 @@ namespace asampler
         public:
             explicit ReaperVst3Extensions (ReaperApi& a) : api (a) {}
 
+            ~ReaperVst3Extensions() override
+            {
+                api.getParent = nullptr;
+                if (reaperHost != nullptr)
+                    reaperHost->release();
+            }
+
             void setIHostApplication (Steinberg::FUnknown* host) override
             {
                 api = {};
+                if (reaperHost != nullptr)
+                {
+                    reaperHost->release();
+                    reaperHost = nullptr;
+                }
                 if (host == nullptr)
                     return;
 
@@ -52,8 +64,8 @@ namespace asampler
                     || obj == nullptr)
                     return;
 
-                auto* reaperHost = static_cast<reaper::IReaperHostApplication*> (obj);
-                auto get = [reaperHost] (const char* name) { return reaperHost->getReaperApi (name); };
+                auto* rh = static_cast<reaper::IReaperHostApplication*> (obj);
+                auto get = [rh] (const char* name) { return rh->getReaperApi (name); };
 
                 api.csurfOnRecord           = reinterpret_cast<void (*) ()> (get ("CSurf_OnRecord"));
                 api.countSelectedMediaItems = reinterpret_cast<int (*) (void*)> (get ("CountSelectedMediaItems"));
@@ -64,12 +76,21 @@ namespace asampler
                 api.getMediaSourceFileName  = reinterpret_cast<void (*) (void*, char*, int)> (get ("GetMediaSourceFileName"));
                 api.undoDoUndo2             = reinterpret_cast<int (*) (void*)> (get ("Undo_DoUndo2"));
                 api.getProjectStateChangeCount = reinterpret_cast<int (*) (void*)> (get ("GetProjectStateChangeCount"));
+                api.undoOnStateChangeEx2    = reinterpret_cast<void (*) (void*, const char*, int, int)> (get ("Undo_OnStateChangeEx2"));
+                api.getExtState             = reinterpret_cast<const char* (*) (const char*, const char*)> (get ("GetExtState"));
+                api.deleteExtState          = reinterpret_cast<void (*) (const char*, const char*, bool)> (get ("DeleteExtState"));
+                api.getTrackGuid            = reinterpret_cast<void* (*) (void*)> (get ("GetTrackGUID"));
+                api.guidToString            = reinterpret_cast<void (*) (const void*, char*)> (get ("guidToString"));
 
-                reaperHost->release();   // queryInterface added a reference
+                // Kept (with the reference queryInterface added) so the parent
+                // track can be asked for later; released in the destructor.
+                reaperHost = rh;
+                api.getParent = [rh] (int which) { return rh->getReaperParent ((Steinberg::uint32) which); };
             }
 
         private:
             ReaperApi& api;
+            reaper::IReaperHostApplication* reaperHost = nullptr;
         };
     }
 

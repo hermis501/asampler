@@ -88,6 +88,7 @@
 <ol>
   <li>In REAPER, insert a new track, add ASampler to it, and arm the track for recording with monitoring on.</li>
   <li>Open the ASampler window and press <kbd>Tab</kbd> until you reach the pad grid. You hear "Pad 1, default, note C1, key Z". Before you load anything, every pad plays a built-in test tone.</li>
+  <li>No samples yet? Tab to the Factory kit button, press <kbd>Space</kbd> and choose Starter Drums: pads 1 to 8 get a kick, hi-hats, snare, clap, rim, tom and 808, ready to play. Otherwise, carry on with your own samples.</li>
   <li>Press <kbd>L</kbd> to open the file dialog, choose a kick drum, and press Enter. You hear "Loaded kick.wav into Pad 1 (Layer 1)".</li>
   <li>Press <kbd>Space</kbd> to hear it. Press <kbd>N</kbd> to try the next file in the same folder, and <kbd>P</kbd> to go back.</li>
   <li>Press <kbd>Right Arrow</kbd> to move to Pad 2 and load a closed hi-hat, then Pad 3 for an open hi-hat, and Pad 5 (one row up) for a snare.</li>
@@ -102,7 +103,7 @@
   <li><strong>The parameter list.</strong> OSARA's parameter dialog (in the FX chain, press P) lists every ASampler parameter, and you can type a value into it. REAPER's own FX parameter list and envelope menus show the same parameters.</li>
   <li><strong>Automation.</strong> Any parameter can be automated: show its envelope from the track's envelope list, then write or draw it as usual.</li>
   <li><strong>Separate outputs.</strong> Run the "ASampler: Create pad tracks" script. See <a href="#outputs">section 16</a>.</li>
-  <li><strong>Presets.</strong> REAPER's preset menu for ASampler lists the four factory kits (see <a href="#kits">section 17</a>). REAPER's own preset saving also works and stores everything.</li>
+  <li><strong>Presets.</strong> REAPER's preset menu for ASampler lists the five factory kits (see <a href="#kits">section 17</a>). REAPER's own preset saving also works and stores everything.</li>
 </ul>
 
 <h2 id="screenreader">5. Screen readers and speech</h2>
@@ -125,12 +126,13 @@
 </ul>
 
 <h2 id="editor">6. The editor</h2>
-<p>The editor is in five parts. <kbd>Tab</kbd> moves between them in this order:</p>
+<p>The editor is in six parts. <kbd>Tab</kbd> moves between them in this order:</p>
 <ol>
   <li><strong>Heading</strong>: "ASampler 1.0.0".</li>
   <li><strong>Pad grid</strong>, one Tab stop.</li>
-  <li><strong>Pad actions</strong>: buttons for the selected pad.</li>
-  <li><strong>Kit actions</strong>: buttons for the whole instrument.</li>
+  <li><strong>Pad settings</strong>: the selected pad's settings as knobs, lists and checkboxes (on the right of the window). <kbd>Ctrl</kbd>+<kbd>B</kbd>, or the button after them, swaps them for the <strong>sample browser</strong> and back.</li>
+  <li><strong>Pad actions</strong>: buttons for the selected pad. The most used ones are buttons; every action is in the pad menu.</li>
+  <li><strong>Kit actions</strong>: buttons for the whole instrument, and the window size.</li>
   <li><strong>Status line</strong>: the last message.</li>
 </ol>
 
@@ -144,14 +146,51 @@
   <li><kbd>Space</kbd> or <kbd>Enter</kbd> plays the pad.</li>
   <li><kbd>Ctrl</kbd> and a pad number jumps straight to that pad when you let go of <kbd>Ctrl</kbd>: hold <kbd>Ctrl</kbd>, type 1 then 2, release, and you are on Pad 12, in whichever bank it is.</li>
 </ul>
+<p><kbd>Shift</kbd>+<kbd>F10</kbd> or the <kbd>Applications</kbd> key opens the <strong>pad menu</strong>, with every action for the selected pad grouped in four submenus: Sample, Play and edit, Copy and apply, and Chop, bounce and render. The More actions button does the same, and with a mouse, so does right-clicking a pad.</p>
 <p>Each pad reads its number, its name if you gave it one, sample name, trigger, any mute or solo, and its computer key. For example: "Pad 3, open hat.wav, note D1, key C", or "Pad 1, Big 808, 808.wav, keys C0 to C3, root C1, key Z". <kbd>F2</kbd> renames the selected pad; leave the name empty to remove it. Names are saved with the project, in kits, and travel with Copy and Paste.</p>
+<h3>Pad settings</h3>
+<p>Every setting of the selected pad is also in the editor itself, so you can shape pads in any DAW, including ones without a usable parameter list such as Studio One, Ableton Live or Logic. These are the same settings as the Focus group (<a href="#params">section 7</a>), with the same names and values.</p>
+<ul>
+  <li>The first control is the <strong>Settings section</strong> list: Main, Trigger, Envelope, Slice, Filter and so on. Choose a section with the arrow keys; only that section's settings follow, so the Tab order stays short.</li>
+  <li>Tab then moves through the section's settings. Each reads its name and value, for example "Filter Cutoff, 1.20 kHz".</li>
+  <li><strong>Knobs:</strong> the arrow keys change the value by 1% of its range, or by one step on stepped settings such as notes. <kbd>Shift</kbd> with an arrow moves 10%. <kbd>Home</kbd> and <kbd>End</kbd> go to the lowest and highest value. <kbd>Enter</kbd> opens a box to type a value, such as "480 ms" or "-6 dB"; <kbd>Enter</kbd> again sets it. With a mouse, drag a knob up or down, and double-click it to return to its default.</li>
+  <li><strong>Lists</strong> (such as Mode or Filter Mode) change with the arrow keys, and <strong>checkboxes</strong> (such as Reverse) with <kbd>Space</kbd>.</li>
+  <li>Selecting another pad switches the settings to that pad, and you stay on the same control.</li>
+  <li>Every change can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, and the host can automate it like any parameter.</li>
+</ul>
+<p>The computer-keyboard pad keys and the shortcuts still work while a setting has focus, except the arrows, which change the setting. While you edit Start or End by ear (<kbd>T</kbd> or <kbd>O</kbd>), the arrows belong to that instead.</p>
+<p>The Envelope, Filter and Modulation sections also draw a small picture above their knobs: the envelope's shape, the filter's response with where the filter envelope takes it, and the two LFO waves. It is for sighted users; every value it shows is one of the knobs below it.</p>
+
+<h3>The sample browser</h3>
+<p><kbd>Ctrl</kbd>+<kbd>B</kbd> puts a list of the samples in a folder where the pad settings were, and moves you into it. <kbd>Ctrl</kbd>+<kbd>B</kbd> again goes back to the settings. The first time, it opens the folder you used last, or the folder of the selected pad's sample, or your Music folder.</p>
+<ul>
+  <li>Folders come first, then audio files in natural order (snare 9 before snare 10). Each file reads its name and its place: "snare 10.wav, 2 of 40".</li>
+  <li>Moving onto a file plays it, without touching any pad. Untick <strong>Preview</strong> to browse silently; <kbd>Space</kbd> then plays the selected file.</li>
+  <li><kbd>Enter</kbd> on a file loads it onto the selected pad, into the Edit Layer. <kbd>Enter</kbd> on a folder opens it, and <kbd>Backspace</kbd> goes back up. Above the top of a drive is the list of drives.</li>
+  <li>A letter or digit jumps to the next name starting with it. While the list has focus, letters belong to it, so the pad keys don't play.</li>
+  <li><strong>Choose folder</strong> opens the system's folder dialog.</li>
+  <li>With a mouse, double-click a file to load it, or drag it onto a pad, or out of the window into your DAW.</li>
+</ul>
+<p>The file dialog (<kbd>L</kbd>) and <kbd>N</kbd> / <kbd>P</kbd> still work as before; the browser is for listening through a folder quickly.</p>
+
+<h3>With a mouse</h3>
+<p>These parts are for sighted users. Everything they show or do is also reachable from the keyboard, so a screen reader skips them.</p>
+<ul>
+  <li><strong>Waveform</strong> (top right): the selected pad's sample, with Start (S, green) and End (E, red) markers, and the loop markers (L) when the pad loops. The part that plays is bright, the rest dimmed, and a white line follows the sound while it plays. Drag a marker to move it, double-click it to reset it; the mouse wheel zooms, and double-clicking elsewhere shows the whole sample again. When other pads use slices of the same file, their starts show as small numbered marks.</li>
+  <li><strong>Pads</strong> are coloured by what they hold: blue for a loaded sample, grey for the built-in tone, red for a missing file. They light up when they play, brighter for a harder hit. The selected pad has a white outline, a muted pad is dimmed with an M, a soloed one shows an S, and the corner shows the computer key that plays it.</li>
+  <li><strong>Meter</strong>: the bar right of the heading shows the main output level, red at full scale.</li>
+  <li><strong>Drag a pad out</strong> of the window, onto a track in your DAW or onto the desktop, and it is rendered with all its settings, as a bounce would be, into a WAV file. The pad menu's "Save Pad as audio file" does the same through a save dialog.</li>
+  <li><strong>Window size</strong>: drag the window's bottom-right corner, or choose a size from 75% to 200% with the Window size button. The window keeps its shape, and the size is remembered on this computer.</li>
+  <li>Buttons show what they do when you hover over them.</li>
+</ul>
+
 <h3>Playing from the computer keyboard</h3>
 <p>The keys <kbd>Z X C V</kbd>, <kbd>A S D F</kbd>, <kbd>Q W E R</kbd> and <kbd>1 2 3 4</kbd> play the 16 pads of the current bank like a keyboard: the pad sounds while the key is held and stops when you let go, so one-shot drums play out and sustained sounds hold. Holding a key does not retrigger it. The velocity is the global <strong>Computer Key Velocity</strong> parameter (default 100).</p>
 <p>The notes also go to ASampler's MIDI output. To record what you play: add a second track, give it a MIDI send from the ASampler track (in REAPER, a send with MIDI only), arm it for recording, and play. Only the computer keys are sent; MIDI arriving from REAPER is not echoed back out.</p>
 <p>Hold <kbd>Shift</kbd> with a pad key to hear what that pad holds, without playing it: "Pad 2, Snare, snare 04.wav, note C#1, key X".</p>
 
 <h3>Pad actions</h3>
-<p>These buttons all act on the selected pad, and their labels name it, for example "Bounce Pad 3 (B)".</p>
+<p>These all act on the selected pad, and their labels name it, for example "Bounce Pad 3 (B)". Load, Previous, Next, Play, Edit Start, Edit End, Describe, Chop, Copy, Paste, Bounce and More actions are buttons. Everything in the table, those included, is in the pad menu (<kbd>Shift</kbd>+<kbd>F10</kbd>).</p>
 <table>
   <caption>Pad action buttons</caption>
   <thead><tr><th scope="col">Button</th><th scope="col">What it does</th></tr></thead>
@@ -164,10 +203,11 @@
     <tr><td>Edit Start / Edit End by ear (T / O)</td><td>Places Start or End with the arrow keys, playing a snippet at each step. See <a href="#slicing">section 9</a>.</td></tr>
     <tr><td>Trim silence</td><td>Moves Start past leading silence and End to where the sound dies away.</td></tr>
     <tr><td>Describe (I)</td><td>Speaks length, level, number of hits, tempo, and key or pitch.</td></tr>
+    <tr><td>Tune (U)</td><td>Detects the sample's pitch and sets the pad's Pitch so it plays in tune. See <a href="#tune">Tuning a pad</a>.</td></tr>
     <tr><td>Rename (F2)</td><td>Gives the pad a name.</td></tr>
     <tr><td>Learn note (K)</td><td>Sets the pad's Note, Low Note or High Note from the next note you play on a MIDI keyboard. See <a href="#pads">section 11</a>.</td></tr>
     <tr><td>Apply settings to other pads</td><td>Copies one setting, or a whole section, from this pad to all pads or to this bank. See <a href="#tools">section 18</a>.</td></tr>
-    <tr><td>Reset</td><td>Returns the layer to the built-in test tone.</td></tr>
+    <tr><td>Reset</td><td>Returns the layer to the built-in test tone. Undo brings the sample back.</td></tr>
     <tr><td>Chop</td><td>Slices this pad's sample across pads 1 to N. The label says which pads it will replace.</td></tr>
     <tr><td>Copy / Paste</td><td>Copies all settings and samples from one pad to another.</td></tr>
     <tr><td>Normalise</td><td>Sets the layer's gain so it peaks at -1 dB.</td></tr>
@@ -176,6 +216,8 @@
     <tr><td>Bounce (B)</td><td>Renders the pad with all its settings to a new sample on the next empty pad.</td></tr>
     <tr><td>Grab REAPER item (Ctrl+G)</td><td>Puts the selected REAPER item onto the pad, as you hear it. See <a href="#reaper-extras">section 16</a>.</td></tr>
     <tr><td>Render stretch / Render formants</td><td>Finishes background stretch or formant processing right away.</td></tr>
+    <tr><td>Save as audio file</td><td>Renders the pad with all its settings, as Bounce does, to a WAV file you name, without loading it anywhere. In the pad menu only.</td></tr>
+    <tr><td>More actions (Shift+F10)</td><td>Opens the pad menu.</td></tr>
   </tbody>
 </table>
 
@@ -186,18 +228,19 @@
   <tbody>
     <tr><td>Undo / Redo (Ctrl+Z / Ctrl+Y)</td><td>Steps back and forward through changes.</td></tr>
     <tr><td>Save kit / Load kit (Ctrl+S / Ctrl+O)</td><td>Saves or opens a <code>.asamplerkit</code> file. Saving asks whether to store sample locations, copy the samples next to the kit, or save a template of settings only. See <a href="#kits">section 17</a>.</td></tr>
-    <tr><td>Factory kit</td><td>Chooses Trap, Boom Bap, Lo-Fi or 808 Set. Changes settings only, never samples.</td></tr>
+    <tr><td>Factory kit</td><td>Chooses Trap, Boom Bap, Lo-Fi, 808 Set or Starter Drums. The first four change settings only; Starter Drums also puts eight built-in sounds on pads 1 to 8.</td></tr>
     <tr><td>Relink samples</td><td>Finds missing samples by name in a folder you choose. The label says how many are missing.</td></tr>
-    <tr><td>Clear all pads</td><td>Resets every pad, after asking you to confirm. Undoable.</td></tr>
+    <tr><td>Clear all pads</td><td>Resets every pad, after asking you to confirm. Undo brings the samples back.</td></tr>
     <tr><td>Export slice MIDI</td><td>Writes a MIDI file with one note per pad slice.</td></tr>
     <tr><td>Keyboard help (F1)</td><td>Speaks the keyboard shortcuts.</td></tr>
+    <tr><td>Window size</td><td>Makes the window bigger or smaller, from 75% to 200%. The label says the current size.</td></tr>
   </tbody>
 </table>
 
 <h2 id="params">7. The parameter list and the Focus group</h2>
-<p>ASampler has about 4,800 parameters: 146 for each of 32 pads, plus globals. Three things keep that manageable.</p>
+<p>ASampler has about 4,800 parameters: 149 for each of 32 pads, plus globals. Three things keep that manageable.</p>
 <h3>The Focus group</h3>
-<p>At the top of the list, after the global parameters, is <strong>Focused Pad</strong>, then 146 parameters named "Focus Volume", "Focus Filter Cutoff" and so on. They always control the focused pad, and they read that pad's values. Change Focused Pad, or select a pad in the editor, and the whole Focus group switches to it. You can shape any pad without leaving the top of the list.</p>
+<p>At the top of the list, after the global parameters, is <strong>Focused Pad</strong>, then 149 parameters named "Focus Volume", "Focus Filter Cutoff" and so on. They always control the focused pad, and they read that pad's values. Change Focused Pad, or select a pad in the editor, and the whole Focus group switches to it. You can shape any pad without leaving the top of the list.</p>
 <h3>Pad prefixes</h3>
 <p>Each pad's own parameters start with its number: "P1 Volume", "P9 Filter Cutoff". Even in a flat list, the name tells you which pad it belongs to. Use these for automation that must always target the same pad.</p>
 <h3>Sections</h3>
@@ -261,6 +304,14 @@
   <li><strong>Tempo</strong>, for loops. Use it to set Original BPM for tempo sync.</li>
   <li><strong>Key</strong>, for melodic material, or <strong>pitch</strong>, for single notes such as an 808. Use the pitch to set the root note. Noise and drums report no key rather than a guess.</li>
 </ul>
+<h3 id="tune">Tuning a pad</h3>
+<p><kbd>U</kbd>, or Tune in the pad menu, detects the pitch of the pad's current slice and sets the pad's <strong>Pitch</strong> so it plays in tune, then says what it did, ending with what it now plays, for example "Pitch set to -0.20 semitones, so it plays D2 in tune".</p>
+<ul>
+  <li>On a <strong>Fixed</strong> pad, the sample moves to the nearest note, so an 808 or a bass hit that sits between notes lands on one.</li>
+  <li>On a <strong>Keyboard</strong> pad, the sample is tuned to the pad's root Note (within half an octave), so the keyboard plays the right notes.</li>
+</ul>
+<p>It works on single notes: an 808, a bass, a sung or played note. For drums, noise or chords there is no clear pitch, so Pitch is left as it was and you are told. Tune is one undo step.</p>
+
 <h3>Missing samples</h3>
 <p>ASampler stores where each sample was loaded from. If you move a project to another computer, or move your sample folder, it keeps the references and says how many are missing. Press Relink samples, choose the folder that now holds them, and they are found by file name, including in subfolders.</p>
 
@@ -293,6 +344,7 @@
   <li><strong>Fade In</strong> and <strong>Fade Out</strong> add short fades at the edges of the slice.</li>
 </ul>
 <p>Looping: set <strong>Loop Mode</strong> to Forward or Ping-Pong and the pad loops between <strong>Loop Start</strong> and <strong>Loop End</strong> while the note is held. <strong>Loop Crossfade</strong> smooths the join in Forward mode.</p>
+<p>Turn on <strong>Exit Loop On Release</strong> and letting go of the note leaves the loop and plays on to End, so a sustained sound loops while held and then its real tail sounds as it fades out: a string or pad that ends naturally, a held vocal note that finishes its decay. With it off, the loop keeps going during the release.</p>
 
 <h2 id="chop">10. Chopping a loop across pads</h2>
 <ol>
@@ -361,11 +413,12 @@
 <h2 id="sound">13. Shaping the sound</h2>
 <h3>Envelope</h3>
 <p>Attack, Decay, Sustain and Release shape volume over each note. The defaults (instant attack, full sustain, 50 ms release) play the sample as it is.</p>
+<p><strong>Hold</strong> keeps the note at full level for a set time after the attack, before Decay starts. That is the shape of a gated 808 or a hit that should stay loud and then fall away: for example Hold 300 ms, Decay 400 ms, Sustain 0. If Attack and Decay are both 0 the note jumps straight to Sustain, and Hold does nothing. At 0 (the default) the envelope is exactly as before.</p>
 <h3>Filter</h3>
 <p><strong>Filter Mode</strong> is Low-pass, High-pass or Band-pass, set with Filter Cutoff and Filter Resonance. The filter has its own envelope:</p>
 <ul>
   <li><strong>Filter Env Amount</strong> sets how far each hit sweeps the cutoff, in octaves, up or down.</li>
-  <li>Filter Env Attack, Decay, Sustain and Release shape the sweep.</li>
+  <li>Filter Env Attack, Hold, Decay, Sustain and Release shape the sweep. <strong>Filter Env Hold</strong> keeps the filter fully open (or closed, with a negative amount) for a while before it sweeps back.</li>
 </ul>
 <p>A positive amount with a short decay gives the classic plucked bass sound.</p>
 <h3>Character</h3>
@@ -480,6 +533,14 @@
 </ul>
 <p>These work only when ASampler runs inside REAPER. In other hosts they say so.</p>
 
+<h3 id="reaper-scripts">Loading samples from REAPER scripts</h3>
+<p>The <strong>"ASampler - Load file onto pad"</strong> script asks for an audio file and a pad number, and ASampler loads the file onto that pad and speaks the result, without its window being open. The installer copies it into REAPER's Scripts folder (<code>Scripts\ASampler</code>) but does not add it to the Actions list: add it once with Actions, New action, Load ReaScript, and give it a shortcut if you like.</p>
+<p>Your own scripts can do the same. Write the request <code>pad|file</code> into REAPER's extended state, section <code>ASampler</code>, key <code>load</code> followed by a space and the ASampler track's GUID. ASampler checks about ten times a second, removes the request and loads the file. Pad 0, or nothing before the bar, means the pad selected in ASampler. In Lua:</p>
+<pre><code>local track = reaper.GetSelectedTrack(0, 0)
+reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
+                   "3|C:\\Samples\\kick.wav", false)</code></pre>
+<p>That loads kick.wav onto Pad 3 of the ASampler on the selected track. A pad number out of range, or a file that is not found, is reported in ASampler's status, as a load from the editor would be.</p>
+
 <h2 id="kits">17. Kits, factory kits and programs</h2>
 <h3>Saving and loading kits</h3>
 <p>Save kit (<kbd>Ctrl</kbd>+<kbd>S</kbd>) stores everything in a <code>.asamplerkit</code> file; Load kit (<kbd>Ctrl</kbd>+<kbd>O</kbd>) opens one. REAPER projects already save all of this, so kits are for reusing a setup across projects. Saving asks which kind of kit to make:</p>
@@ -489,7 +550,7 @@
   <li><strong>Template</strong>: settings only. Loading a template changes every parameter and leaves your samples and pad names alone, like a factory kit.</li>
 </ul>
 <h3>Factory kits</h3>
-<p>The four factory kits set up a playing style and never change your samples.</p>
+<p>The first four factory kits set up a playing style and never change your samples. The fifth, Starter Drums, gives you something to play straight away.</p>
 <p>Every factory kit first sets up the following on all pads:</p>
 <ul>
   <li>one-shot drums with short fades and Zero-Cross Snap</li>
@@ -504,13 +565,14 @@
     <tr><td>Boom Bap</td><td>Rounder releases, light tube saturation, a gentle low-pass at 12 kHz, 1/16 repeat with swing and humanize.</td></tr>
     <tr><td>Lo-Fi</td><td>Tape saturation, 12-bit, halved sample rate, low-pass at 7 kHz, more swing and humanize.</td></tr>
     <tr><td>808 Set</td><td>Every pad gets a long 808 shape with legato glide, mono voicing, long release and pitch punch, and no choke groups. Pad 1 is set to Keyboard across C0 to C3; the other pads stay on their own notes.</td></tr>
+    <tr><td>Starter Drums</td><td>Puts eight drum sounds made by ASampler itself on pads 1 to 8: Kick, Closed Hat, Open Hat, Snare, Clap, Rim, Tom and 808, replacing what those pads held. Pads 9 to 32 keep their samples. The sounds are saved as WAV files in <code>%APPDATA%\ASampler\starter</code>, so a project that uses them opens with them, and Undo brings the previous samples back.</td></tr>
   </tbody>
 </table>
 <h3>Programs</h3>
 <p>The factory kits are also ASampler's programs:</p>
 <ul>
   <li>Program 0, "Current", is your own settings.</li>
-  <li>Programs 1 to 4 are the kits.</li>
+  <li>Programs 1 to 5 are the kits, in the order above.</li>
 </ul>
 <p>Choose them from the host's preset menu, or send a MIDI program change if your host passes program changes to plugins.</p>
 
@@ -533,7 +595,8 @@
 <p><strong>Pitch Bend Range</strong> sets how far the pitch wheel bends every sounding pad, from 1 to 24 semitones (default 2).</p>
 
 <h2 id="undo">20. Undo and redo</h2>
-<p>Every parameter change and every action can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the Undo button), and redone with <kbd>Ctrl</kbd>+<kbd>Y</kbd>. Undoable actions include loading, browsing, chopping, pasting, applying settings to pads, trimming, editing Start and End by ear, learning notes, factory kits, normalising and clear all. A chop across 32 pads is one step. Selecting pads is not recorded, so walking the pad grid never fills the history. Loading a project starts a fresh history.</p>
+<p>Every parameter change and every action can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the Undo button), and redone with <kbd>Ctrl</kbd>+<kbd>Y</kbd>. Undoable actions include chopping, pasting, applying settings to pads, trimming, editing Start and End by ear, learning notes, factory kits, normalising, tuning, Reset and Clear all pads (with their samples). Loading or browsing to a new sample is not an undo step: to go back, load the previous file again, or use <kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>P</kbd> to try a sample before keeping it. A chop across 32 pads is one step. Selecting pads is not recorded, so walking the pad grid never fills the history. Loading a project starts a fresh history.</p>
+<p><strong>In REAPER</strong>, ASampler also adds a step to REAPER's own undo history whenever a pad's sample or name changes (a load, a browse, a chop, a rename), named after what happened, for example "ASampler: Loaded kick.wav into Pad 1 (Layer 1)". So REAPER's Undo, in the main window, can take back a sample change too, including a load, which ASampler's own undo does not cover. Parameter changes are left to REAPER's usual handling, so they are not recorded twice.</p>
 
 <h2 id="recipes">21. Recipes</h2>
 <h3>A gliding 808</h3>
@@ -630,6 +693,7 @@
   <thead><tr><th scope="col">Parameter</th><th scope="col">Range</th><th scope="col">Default</th><th scope="col">What it does</th></tr></thead>
   <tbody>
     <tr><td>Attack</td><td>0 ms to 5 s</td><td>0 ms</td><td>Fade-in time at note start.</td></tr>
+    <tr><td>Hold</td><td>0 ms to 5 s</td><td>0 ms</td><td>Time at full level after the attack, before Decay.</td></tr>
     <tr><td>Decay</td><td>0 ms to 5 s</td><td>0 ms</td><td>Time to fall to the sustain level.</td></tr>
     <tr><td>Sustain</td><td>0 to 100%</td><td>100%</td><td>Level held while the note is down.</td></tr>
     <tr><td>Release</td><td>0 ms to 10 s</td><td>50 ms</td><td>Fade-out time after the note ends.</td></tr>
@@ -650,6 +714,7 @@
     <tr><td>Fade Out</td><td>0 to 500 ms</td><td>0 ms</td><td>Fade at the slice end.</td></tr>
     <tr><td>Loop Crossfade</td><td>0 to 500 ms</td><td>0 ms</td><td>Smooths the loop join (Forward mode).</td></tr>
     <tr><td>Zero-Cross Snap</td><td>Off, On</td><td>Off</td><td>Moves slice and loop points to the nearest zero crossing.</td></tr>
+    <tr><td>Exit Loop On Release</td><td>Off, On</td><td>Off</td><td>On note release, leave the loop and play on to End.</td></tr>
   </tbody>
 </table></div>
 
@@ -663,6 +728,7 @@
     <tr><td>Filter Resonance</td><td>Q 0.10 to Q 10.00</td><td>Q 0.71</td><td>Emphasis at the cutoff. 0.71 is flat.</td></tr>
     <tr><td>Filter Env Amount</td><td>-8 to +8 oct</td><td>0 oct</td><td>How far each note sweeps the cutoff.</td></tr>
     <tr><td>Filter Env Attack</td><td>0 ms to 5 s</td><td>1 ms</td><td>Sweep rise time.</td></tr>
+    <tr><td>Filter Env Hold</td><td>0 ms to 5 s</td><td>0 ms</td><td>Time at the sweep's peak before it falls back.</td></tr>
     <tr><td>Filter Env Decay</td><td>0 ms to 5 s</td><td>200 ms</td><td>Sweep fall time.</td></tr>
     <tr><td>Filter Env Sustain</td><td>0 to 100%</td><td>0%</td><td>Sweep level held while the note is down.</td></tr>
     <tr><td>Filter Env Release</td><td>0 ms to 5 s</td><td>100 ms</td><td>Sweep return time after the note ends.</td></tr>
@@ -789,12 +855,15 @@
     <tr><td><kbd>K</kbd></td><td>Learn the pad's note from the next MIDI note (<kbd>Escape</kbd> cancels)</td></tr>
     <tr><td><kbd>I</kbd></td><td>Describe the sample</td></tr>
     <tr><td><kbd>B</kbd></td><td>Bounce the pad to the next empty pad</td></tr>
+    <tr><td><kbd>U</kbd></td><td>Tune the pad to the sample's detected pitch</td></tr>
     <tr><td><kbd>F2</kbd></td><td>Rename the pad</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Save a kit / open a kit</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Load audio files copied in Explorer onto the pad</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>Toggle REAPER's record</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Grab the selected REAPER item onto the pad</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Show the sample browser / the pad settings</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>F10</kbd> or <kbd>Applications</kbd></td><td>Open the pad menu with every action for the pad</td></tr>
     <tr><td><kbd>F1</kbd></td><td>Speak keyboard help</td></tr>
     <tr><td><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Move between heading, grid, buttons and status</td></tr>
   </tbody>
@@ -852,7 +921,7 @@
   <li><strong>CPU:</strong> 256 voices at the original pitch use about 32% of one core at 44.1 kHz (about 0.13% per voice). A voice pitched an octave up costs about 0.35%. Stretch and formant processing happens in the background and costs nothing during playback.</li>
   <li><strong>Sample rates:</strong> any. Samples are converted on the fly, and the stretch engine adapts its analysis to the sample's rate.</li>
   <li><strong>Saved state:</strong> every parameter, sample locations (kept even when missing), pad names and MIDI learn bindings, in the project or a <code>.asamplerkit</code> file.</li>
-  <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 350 automated tests.</li>
+  <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 380 automated tests.</li>
 </ul>
 <p class="muted">ASampler 1.0.0. See CHANGELOG.md for the version history.</p>
 </main>

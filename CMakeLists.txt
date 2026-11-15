@@ -63,6 +63,7 @@ add_library(asampler_core STATIC
     source/engine/Transient.cpp
     source/engine/SampleAnalysis.h
     source/engine/SampleAnalysis.cpp
+    source/engine/StarterSounds.cpp
     source/engine/PhaseVocoder.cpp
     source/engine/PhaseVocoder.h
 )
@@ -111,6 +112,15 @@ target_sources(ASampler PRIVATE
     source/PluginEditor.cpp
     source/PluginEditor.h
     source/FocusProxyParameter.h
+    source/ParameterPanel.cpp
+    source/ParameterPanel.h
+    source/SampleBrowser.cpp
+    source/SampleBrowser.h
+    source/SectionGraph.cpp
+    source/SectionGraph.h
+    source/UiSettings.h
+    source/WaveformView.cpp
+    source/WaveformView.h
     source/ScreenReaderAnnouncer.cpp
     source/ReaperIntegration.cpp
     source/ClipboardFiles.cpp

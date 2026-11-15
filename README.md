@@ -16,7 +16,7 @@ own voice and speed.
 - 32 pads in two banks of 16. Each pad holds up to 8 samples as layers
   (velocity, round robin, random, or key zones for a proper multisampled
   instrument), and layers can also fire on note release.
-- Per pad: volume, pan, tuning, envelope, filter with its own envelope,
+- Per pad: volume, pan, tuning, envelope with hold, filter with its own envelope,
   saturation and bit/sample-rate crush, two LFOs, mod wheel, glide, pitch
   envelope for 808s, stereo width, choke groups and note repeat with swing.
 - Pads are either fixed to one note (drums) or spread across the keyboard
@@ -31,13 +31,32 @@ own voice and speed.
 - Browse a folder with N and P, or try the next sample in the beat with
   Shift+N before you commit to it.
 - Describe (I) tells you a sample's length, level, number of hits, tempo and
-  key, the things you'd otherwise read off a waveform.
+  key, the things you'd otherwise read off a waveform. Tune (U) sets a pad's
+  pitch so the sample plays in tune.
 - Bounce a pad to a new sample, normalise, copy and paste pads, export slices
   as a MIDI file, save kits with or without their samples.
-- Undo and redo for everything, including a chop across 32 pads.
+- Undo and redo for settings and actions, including a chop across 32 pads.
+- A Starter Drums kit with eight sounds ASampler makes itself, so there is
+  something to play before you have samples of your own.
 - A main stereo output plus one per pad. The included REAPER script sets up
   a routed track for every pad in one go.
-- In REAPER: Ctrl+R toggles record, Ctrl+G puts the selected item on a pad.
+- In REAPER: Ctrl+R toggles record, Ctrl+G puts the selected item on a pad,
+  sample changes show up in REAPER's own undo, and scripts can load files
+  onto pads (an example script is included).
+
+Every setting of the selected pad is also in the plugin window, as knobs,
+lists and checkboxes, one section at a time. So ASampler works the same in
+any DAW, with a mouse or a screen reader, not only in hosts with a good
+parameter list.
+
+For sighted users the window also shows the selected pad's waveform with
+draggable Start and End markers and a playhead, pads coloured by what they
+hold that light up when played, an output meter, and graphs of the envelope,
+filter and LFOs. A sample browser (Ctrl+B) plays each file as you move
+through a folder; drag a file onto a pad, or drag a pad out of the window as
+a rendered WAV. The window can be resized. None of this is needed with a
+screen reader, and none of it gets in the way: the waveform and graphs stay
+out of the Tab order, and every action is also in the pad menu (Shift+F10).
 
 With 32 pads there are about 4,800 parameters, which nobody wants to arrow
 through. The Focus group mirrors whichever pad is selected, so in practice
@@ -55,7 +74,8 @@ Get the latest version from [Releases](../../releases).
 - **Windows** (10 or later, 64-bit): run `ASampler-<version>-Windows-Setup.exe`.
   It installs the VST3 into `C:\Program Files\Common Files\VST3`. If you use
   REAPER, a checkbox (on by default) also adds the "Create pad tracks" script
-  to the Actions list. The installer isn't code-signed yet, so SmartScreen
+  to the Actions list, and copies the "Load file onto pad" script into
+  REAPER's Scripts folder (load it from the Actions list to use it). The installer isn't code-signed yet, so SmartScreen
   may warn you: choose More info, then Run anyway.
 - **macOS** (11 or later, Apple Silicon and Intel): run
   `ASampler-<version>-macOS.pkg`, which installs the VST3 and Audio Unit

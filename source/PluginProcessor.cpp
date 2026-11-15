@@ -4,6 +4,7 @@
 
 #include "engine/DefaultSample.h"
 #include "engine/PhaseVocoder.h"
+#include "engine/StarterSounds.h"
 #include "engine/Transient.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -408,6 +409,9 @@ namespace asampler
                 { [] (int p) { return param_ids::padLayerFine (p, 8); }, "Layer 8 Fine Tune", "Layers" },
                 { [] (int p) { return param_ids::padSpeed (p); }, "Speed", "Time and Formant" },
                 { [] (int p) { return param_ids::padKeepLength (p); }, "Keep Length", "Time and Formant" },
+                { [] (int p) { return param_ids::padHold (p); }, "Hold", "Envelope" },
+                { [] (int p) { return param_ids::padFiltEnvHold (p); }, "Filter Env Hold", "Filter" },
+                { [] (int p) { return param_ids::padLoopExit (p); }, "Exit Loop On Release", "Slice" },
             };
             return specs;
         }
@@ -1054,6 +1058,27 @@ namespace asampler
                 AudioParameterBoolAttributes()
                     .withStringFromValueFunction ([] (bool v, int) { return v ? "On" : "Off"; })));
 
+            // Hold: the envelope stays at full level this long after the
+            // attack before decaying (AHDSR). 0 = the plain ADSR it always was.
+            add (std::make_unique<AudioParameterFloat> (
+                ParameterID { param_ids::padHold (pad), 1 }, nm ("Hold"),
+                NormalisableRange<float> { 0.0f, 5.0f, 0.001f, 0.4f }, 0.0f,
+                AudioParameterFloatAttributes()
+                    .withStringFromValueFunction ([] (float v, int) { return formatTime (v); })));
+
+            add (std::make_unique<AudioParameterFloat> (
+                ParameterID { param_ids::padFiltEnvHold (pad), 1 }, nm ("Filter Env Hold"),
+                NormalisableRange<float> { 0.0f, 5.0f, 0.001f, 0.4f }, 0.0f,
+                AudioParameterFloatAttributes()
+                    .withStringFromValueFunction ([] (float v, int) { return formatTime (v); })));
+
+            // Loop while held, then on release leave the loop and play the
+            // rest of the sample (a sustain loop with a release tail).
+            add (std::make_unique<SnappedBoolParameter> (
+                ParameterID { param_ids::padLoopExit (pad), 1 }, nm ("Exit Loop On Release"), false,
+                AudioParameterBoolAttributes()
+                    .withStringFromValueFunction ([] (bool v, int) { return v ? "On" : "Off"; })));
+
             // File each parameter under its section, in spec order: Pad 9 /
             // Filter / P9 Filter Cutoff. Hosts that show VST3 units (and
             // OSARA's parameter dialog, which builds a tree from them) let the
@@ -1119,6 +1144,9 @@ namespace asampler
                  makeParameterLayout ([this] (int pad) { return getPadReferenceSeconds (pad); }))
     {
         formatManager.registerBasicFormats();
+
+        for (auto& f : padPlayFraction)
+            f.store (-1.0f);   // silent until a block says otherwise
 
         defaultSample = std::make_shared<const Sample> (generateDefaultSample (44100.0));
         for (auto& pad : pads)
@@ -1417,6 +1445,9 @@ namespace asampler
             }
             padParams[i].speed      = state.getRawParameterValue (param_ids::padSpeed (p));
             padParams[i].keepLength = state.getRawParameterValue (param_ids::padKeepLength (p));
+            padParams[i].hold        = state.getRawParameterValue (param_ids::padHold (p));
+            padParams[i].filtEnvHold = state.getRawParameterValue (param_ids::padFiltEnvHold (p));
+            padParams[i].loopExit    = state.getRawParameterValue (param_ids::padLoopExit (p));
         }
 
         scaleKeyParam  = state.getRawParameterValue (param_ids::scaleKey);
@@ -2007,6 +2038,8 @@ namespace asampler
         cfg.adsr.decay     = padParams[padIndex].decay->load();
         cfg.adsr.sustain   = padParams[padIndex].sustain->load();
         cfg.adsr.release   = padParams[padIndex].release->load();
+        cfg.holdSeconds    = padParams[padIndex].hold->load();
+        cfg.exitLoopOnRelease = padParams[padIndex].loopExit->load() >= 0.5f;
         cfg.pitchBendSemitones = liveTrigger ? currentPitchBendSemitones : 0.0f;
         cfg.padGate = resolvePadGate (padIndex);
 
@@ -2141,6 +2174,7 @@ namespace asampler
         cfg.filterEnvAdsr.decay    = padParams[padIndex].filtEnvDecay->load();
         cfg.filterEnvAdsr.sustain  = padParams[padIndex].filtEnvSustain->load();
         cfg.filterEnvAdsr.release  = padParams[padIndex].filtEnvRelease->load();
+        cfg.filterEnvHoldSeconds   = padParams[padIndex].filtEnvHold->load();
 
         // Stereo shaping.
         cfg.stereoWidth = padParams[padIndex].stereoWidth->load();
@@ -2303,6 +2337,9 @@ namespace asampler
             const auto base = plan.baseCfg;
             const int  note = plan.triggerNote;
             voicePool.triggerPad (padIndex, std::move (plan.sample), note, plan.cfg, padCap);
+
+            padHitVelocity[(std::size_t) padIndex].store (velocity, std::memory_order_relaxed);
+            padHitCount[(std::size_t) padIndex].fetch_add (1, std::memory_order_release);
 
             for (int k = 1; k < numLayers; ++k)
             {
@@ -2472,6 +2509,7 @@ namespace asampler
                                           juce::MidiBuffer& midi)
     {
         juce::ScopedNoDenormals noDenormals;
+
         buffer.clear();
 
         // Note learn: the first note-on while armed is captured (the timer
@@ -2678,6 +2716,16 @@ namespace asampler
         const auto gainLin = juce::Decibels::decibelsToGain (masterGainParam->load(), -60.0f);
         busViews[0].applyGain (gainLin);
 
+        // For the window: playheads and the output meter.
+        voicePool.collectPlayFractions (playFractionScratch.data(), kNumPads);
+        for (int p = 0; p < kNumPads; ++p)
+            padPlayFraction[(std::size_t) p].store (playFractionScratch[(std::size_t) p], std::memory_order_relaxed);
+        {
+            const float peak = busViews[0].getNumChannels() > 0 ? busViews[0].getMagnitude (0, numSamples) : 0.0f;
+            if (peak > outputPeak.load (std::memory_order_relaxed))
+                outputPeak.store (peak, std::memory_order_relaxed);
+        }
+
         // The raw preview player (slice scrubbing), on Main after the master:
         // it is a monitoring signal, not part of the mix.
         if (previewActive.load (std::memory_order_acquire))
@@ -2804,6 +2852,55 @@ namespace asampler
 
         if (filePath.isNotEmpty() && ! missing)
             lastSampleFolder = juce::File (filePath).getParentDirectory();
+
+        if (restoringState.load() == 0)
+            hostStateDirty.store (true);
+    }
+
+    struct ASamplerProcessor::LayerAudioAction : public juce::UndoableAction
+    {
+        struct Content
+        {
+            std::shared_ptr<const Sample> sample;   // null = the built-in tone
+            juce::String path;
+            bool missing = false;
+        };
+
+        LayerAudioAction (ASamplerProcessor& p, int padIndex, int layerIndex, Content before, Content after)
+            : proc (p), pad (padIndex), layer (layerIndex), oldContent (std::move (before)), newContent (std::move (after))
+        {
+        }
+
+        bool perform() override { apply (newContent); return true; }
+        bool undo() override    { apply (oldContent); return true; }
+        int  getSizeInUnits() override { return 1; }
+
+        void apply (const Content& c)
+        {
+            proc.setLayerAudio (pad, layer, c.sample, c.path, c.missing);
+        }
+
+        ASamplerProcessor& proc;
+        int pad, layer;
+        Content oldContent, newContent;
+    };
+
+    void ASamplerProcessor::setLayerAudioUndoable (int padIndex, int layerIndex,
+                                                   std::shared_ptr<const Sample> sample,
+                                                   const juce::String& filePath)
+    {
+        const auto& slot = pads[(std::size_t) padIndex].layers[(std::size_t) layerIndex];
+
+        // The built-in tone is recorded as "none": it is regenerated at each
+        // host rate, so the pointer held now may not be the current one later.
+        LayerAudioAction::Content before { slot.filePath.isEmpty() || slot.missing ? nullptr : slot.sample.load(),
+                                           slot.filePath, slot.missing };
+        LayerAudioAction::Content after  { filePath.isEmpty() ? nullptr : std::move (sample), filePath, false };
+
+        if (before.path == after.path && before.sample == after.sample && ! before.missing)
+            return;   // nothing changes: no empty undo step
+
+        undoManager.perform (new LayerAudioAction (*this, padIndex, layerIndex, std::move (before), std::move (after)));
     }
 
     ASamplerProcessor::LoadResult
@@ -3040,6 +3137,39 @@ namespace asampler
         return relinked;
     }
 
+    ASamplerProcessor::PadContent ASamplerProcessor::getPadContent (int padIndex) const
+    {
+        if (! juce::isPositiveAndBelow (padIndex, kNumPads))
+            return PadContent::BuiltIn;
+        for (const auto& layer : pads[(std::size_t) padIndex].layers)
+            if (layer.missing)
+                return PadContent::Missing;
+        return padHoldsLoadedSample (padIndex) ? PadContent::Loaded : PadContent::BuiltIn;
+    }
+
+    uint32_t ASamplerProcessor::getPadHitCount (int padIndex) const noexcept
+    {
+        return juce::isPositiveAndBelow (padIndex, kNumPads)
+                 ? padHitCount[(std::size_t) padIndex].load (std::memory_order_acquire) : 0u;
+    }
+
+    float ASamplerProcessor::getPadHitVelocity (int padIndex) const noexcept
+    {
+        return juce::isPositiveAndBelow (padIndex, kNumPads)
+                 ? padHitVelocity[(std::size_t) padIndex].load (std::memory_order_relaxed) : 0.0f;
+    }
+
+    float ASamplerProcessor::getPadPlayFraction (int padIndex) const noexcept
+    {
+        return juce::isPositiveAndBelow (padIndex, kNumPads)
+                 ? padPlayFraction[(std::size_t) padIndex].load (std::memory_order_relaxed) : -1.0f;
+    }
+
+    float ASamplerProcessor::takeOutputPeak() noexcept
+    {
+        return outputPeak.exchange (0.0f, std::memory_order_relaxed);
+    }
+
     int ASamplerProcessor::getMissingSampleCount() const
     {
         int n = 0;
@@ -3102,7 +3232,8 @@ namespace asampler
         if (padIndex < 0 || padIndex >= kNumPads) return;
         if (layerIndex < 0 || layerIndex >= kNumLayers) return;
 
-        setLayerAudio (padIndex, layerIndex, nullptr, {});
+        beginUndoTransaction ("Reset Pad " + juce::String (padIndex + 1));
+        setLayerAudioUndoable (padIndex, layerIndex, nullptr, {});
         setStatus ("Reset Pad " + juce::String (padIndex + 1)
                    + " (Layer " + juce::String (layerIndex + 1) + ") to default");
     }
@@ -3443,25 +3574,140 @@ namespace asampler
         return text;
     }
 
-    ASamplerProcessor::BounceResult
-    ASamplerProcessor::bouncePad (int padIndex, const juce::File& outputDir)
+    bool ASamplerProcessor::tunePad (int padIndex)
     {
-        BounceResult result;
+        if (padIndex < 0 || padIndex >= kNumPads) return false;
+        const auto& pp = padParams[(std::size_t) padIndex];
+        const auto padName = "Pad " + juce::String (padIndex + 1);
+
+        const auto sample = referenceSample (padIndex);
+        if (sample == nullptr || sample->isEmpty() || getPadContent (padIndex) != PadContent::Loaded)
+        {
+            setStatus (padName + " has no sample to tune");
+            return false;
+        }
+
+        const int   total     = sample->getNumSamples();
+        const float startNorm = juce::jmin (pp.start->load(), pp.end->load());
+        const float endNorm   = juce::jmax (pp.start->load(), pp.end->load());
+        const int   s0 = juce::jlimit (0, total, juce::roundToInt (startNorm * (float) total));
+        const int   e0 = juce::jlimit (s0, total, juce::roundToInt (endNorm * (float) total));
+
+        const auto a = analyseSample (sample->getBuffer(), sample->getSourceSampleRate(), s0, e0);
+        if (! a.pitchMidi)
+        {
+            setStatus (padName + ": no clear pitch found, so Pitch is unchanged");
+            return false;
+        }
+
+        const float detected = *a.pitchMidi;
+        const bool  keyboard = static_cast<PadMode> (juce::roundToInt (pp.mode->load())) == PadMode::Keyboard;
+        float target = (float) juce::roundToInt (detected);
+        if (keyboard)
+        {
+            // The root's pitch class, in the octave nearest the sample.
+            const int root = juce::roundToInt (pp.note->load());
+            float diff = std::fmod ((float) root - detected, 12.0f);
+            if (diff < -6.0f) diff += 12.0f;
+            if (diff >= 6.0f) diff -= 12.0f;
+            target = detected + diff;
+        }
+
+        const float newPitch = juce::jlimit (-24.0f, 24.0f, std::round ((target - detected) * 100.0f) / 100.0f);
+
+        beginUndoTransaction ("Tune " + padName);
+        setRangedParam (param_ids::padPitch (padIndex + 1), newPitch);
+
+        auto text = padName + ": the sample is " + describePitch (detected) + ". Pitch set to "
+                  + (newPitch >= 0.0f ? "+" : "") + juce::String (newPitch, 2) + " semitones, so it plays "
+                  + formatNote (juce::roundToInt (target))
+                  + (keyboard ? " on its root key" : " in tune");
+        setStatus (text);
+        return true;
+    }
+
+    // ---------------- REAPER undo and script requests ----------------
+
+    void ASamplerProcessor::syncWithReaper()
+    {
+        if (hostStateDirty.exchange (false) && reaperApi.canMarkUndo())
+        {
+            // REAPER snapshots the plugin's state for this undo point, so its
+            // own undo (Ctrl+Z in the arrange view) can bring samples back.
+            void* project = reaperApi.getParent != nullptr ? reaperApi.getParent (3) : nullptr;
+            const auto desc = ("ASampler: " + getLastStatusMessage()).substring (0, 120);
+            reaperApi.undoOnStateChangeEx2 (project, desc.toRawUTF8(), kReaperUndoStateFx, -1);
+        }
+
+        if (! reaperApi.canReceiveScripts())
+            return;
+
+        void* track = reaperApi.getParent (1);
+        if (track == nullptr)
+            return;   // not on a track (take FX, monitoring FX)
+        void* guid = reaperApi.getTrackGuid (track);
+        if (guid == nullptr)
+            return;
+
+        char guidText[64] = {};
+        reaperApi.guidToString (guid, guidText);
+        const auto key = "load " + juce::String (guidText);
+
+        const char* value = reaperApi.getExtState ("ASampler", key.toRawUTF8());
+        if (value == nullptr || *value == 0)
+            return;
+
+        const auto request = juce::String (juce::CharPointer_UTF8 (value));   // copy before deleting
+        reaperApi.deleteExtState ("ASampler", key.toRawUTF8(), false);
+        loadFromScriptRequest (request);
+    }
+
+    bool ASamplerProcessor::loadFromScriptRequest (const juce::String& request)
+    {
+        if (! request.containsChar ('|'))
+        {
+            setStatus ("A script asked ASampler to load \"" + request + "\", which is not \"pad|file\"");
+            return false;
+        }
+
+        const auto padText = request.upToFirstOccurrenceOf ("|", false, false).trim();
+        const juce::File file (request.fromFirstOccurrenceOf ("|", false, false).trim().unquoted());
+        const int padNumber = padText.isEmpty() ? 0 : padText.getIntValue();
+
+        if (! padText.containsOnly ("0123456789") || padNumber < 0 || padNumber > kNumPads)
+        {
+            setStatus ("A script asked for pad " + padText + "; ASampler has pads 1 to " + juce::String (kNumPads));
+            return false;
+        }
+        if (! file.existsAsFile())
+        {
+            setStatus ("A script asked ASampler to load " + file.getFullPathName() + ", which was not found");
+            return false;
+        }
+
+        const int pad = padNumber == 0 ? getCurrentFocusedPad() : padNumber - 1;
+        loadSampleForPadLayerAsync (pad, getCurrentEditLayer(), file);
+        return true;
+    }
+
+    bool ASamplerProcessor::renderPadHit (int padIndex, juce::AudioBuffer<float>& out, int& length,
+                                          double& sampleRate, int& layerOut)
+    {
+        length = 0;
         if (padIndex < 0 || padIndex >= kNumPads)
-            return result;
+            return false;
 
         const double sr = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
+        sampleRate = sr;
         const int rootNote = juce::roundToInt (padParams[(std::size_t) padIndex].note->load());
 
         // Full velocity: a bounce is a committed version of the sound, so it
         // takes the loudest layer and the full velocity modulation.
         const int layer = selectLayerForTrigger (padIndex, rootNote, 1.0f);
+        layerOut = layer;
         auto plan = planTrigger (padIndex, rootNote, 1.0f, layer, false);
         if (plan.sample == nullptr || plan.sample->isEmpty())
-        {
-            setStatus ("Pad " + juce::String (padIndex + 1) + " has nothing to bounce");
-            return result;
-        }
+            return false;
         plan.cfg.padGate = 1.0f;   // render even if the pad is muted
 
         Voice voice;
@@ -3483,7 +3729,7 @@ namespace asampler
         constexpr int    kBlock      = 512;
         const int maxSamples = juce::roundToInt (kMaxSeconds * sr);
 
-        juce::AudioBuffer<float> out (2, maxSamples);
+        out.setSize (2, maxSamples, false, false, true);
         out.clear();
 
         int rendered = 0;
@@ -3501,11 +3747,84 @@ namespace asampler
         }
 
         // Trim the inaudible tail the release leaves behind.
-        int length = rendered;
+        length = rendered;
         const float floor = juce::Decibels::decibelsToGain (-90.0f);
         while (length > 0 && std::abs (out.getSample (0, length - 1)) < floor
                            && std::abs (out.getSample (1, length - 1)) < floor)
             --length;
+        return true;
+    }
+
+    bool ASamplerProcessor::writeWav24 (const juce::File& file, const juce::AudioBuffer<float>& buffer,
+                                        int length, double sampleRate)
+    {
+        file.getParentDirectory().createDirectory();
+        file.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (new juce::FileOutputStream (file), sampleRate,
+                                 (unsigned int) buffer.getNumChannels(), 24, {}, 0));
+        return writer != nullptr && writer->writeFromAudioSampleBuffer (buffer, 0, length);
+    }
+
+    bool ASamplerProcessor::savePadAudio (int padIndex, const juce::File& file, bool announceResult)
+    {
+        if (padIndex < 0 || padIndex >= kNumPads)
+            return false;
+
+        juce::AudioBuffer<float> out;
+        int length = 0, layer = 0;
+        double sr = 44100.0;
+        const auto padName = "Pad " + juce::String (padIndex + 1);
+
+        if (! renderPadHit (padIndex, out, length, sr, layer))
+        {
+            if (announceResult) setStatus (padName + " has nothing to save");
+            return false;
+        }
+        if (length == 0)
+        {
+            if (announceResult) setStatus (padName + " renders to silence; nothing saved");
+            return false;
+        }
+        if (! writeWav24 (file, out, length, sr))
+        {
+            setStatus ("Could not write " + file.getFullPathName());
+            return false;
+        }
+        if (announceResult)
+            setStatus ("Saved " + padName + " as " + file.getFileName() + ", "
+                       + juce::String (length / sr, 2) + " s");
+        return true;
+    }
+
+    juce::String ASamplerProcessor::getPadAudioFileStem (int padIndex) const
+    {
+        if (padIndex < 0 || padIndex >= kNumPads) return {};
+        const auto name = getPadName (padIndex);
+        juce::String sourceName = name;
+        if (sourceName.isEmpty())
+            for (const auto& l : pads[(std::size_t) padIndex].layers)
+                if (l.filePath.isNotEmpty()) { sourceName = juce::File (l.filePath).getFileNameWithoutExtension(); break; }
+        return juce::File::createLegalFileName ("Pad " + juce::String (padIndex + 1)
+                                                + (sourceName.isNotEmpty() ? " " + sourceName : juce::String()));
+    }
+
+    ASamplerProcessor::BounceResult
+    ASamplerProcessor::bouncePad (int padIndex, const juce::File& outputDir)
+    {
+        BounceResult result;
+        if (padIndex < 0 || padIndex >= kNumPads)
+            return result;
+
+        juce::AudioBuffer<float> out;
+        int length = 0, layer = 0;
+        double sr = 44100.0;
+        if (! renderPadHit (padIndex, out, length, sr, layer))
+        {
+            setStatus ("Pad " + juce::String (padIndex + 1) + " has nothing to bounce");
+            return result;
+        }
 
         if (length == 0)
         {
@@ -3526,15 +3845,10 @@ namespace asampler
                         + " bounce";
         const auto file = dir.getNonexistentChildFile (juce::File::createLegalFileName (stem), ".wav", false);
 
+        if (! writeWav24 (file, out, length, sr))
         {
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (new juce::FileOutputStream (file), sr, 2, 24, {}, 0));
-            if (writer == nullptr || ! writer->writeFromAudioSampleBuffer (out, 0, length))
-            {
-                setStatus ("Could not write the bounce to " + dir.getFullPathName());
-                return result;
-            }
+            setStatus ("Could not write the bounce to " + dir.getFullPathName());
+            return result;
         }
         result.file = file;
 
@@ -4066,7 +4380,8 @@ namespace asampler
 
     juce::StringArray ASamplerProcessor::getFactoryKitNames()
     {
-        return { "Trap", "Boom Bap", "Lo-Fi", "808 Set" };
+        // Append only: a kit's index is its program number.
+        return { "Trap", "Boom Bap", "Lo-Fi", "808 Set", "Starter Drums" };
     }
 
     bool ASamplerProcessor::loadFactoryKit (int index)
@@ -4188,11 +4503,50 @@ namespace asampler
                 }
                 break;
 
+            case 4:  // Starter Drums — the one kit that brings its own sounds
+            {
+                const auto sounds = starter::soundNames();
+                for (int p = 1; p <= kNumPads; ++p)
+                {
+                    setRangedParam (param_ids::padRelease (p), 0.1f);
+                    setRangedParam (param_ids::padDecay (p),   0.3f);
+                }
+                setRangedParam (param_ids::padRelease (sounds.size()), 0.6f);   // the 808 rings
+
+                const auto dir = getStarterSoundsFolder();
+                dir.createDirectory();
+                constexpr double kRate = 44100.0;
+                for (int i = 0; i < sounds.size(); ++i)
+                {
+                    auto audio = starter::render (i, kRate);
+                    const auto file = dir.getChildFile (juce::String (i + 1).paddedLeft ('0', 2) + " "
+                                                        + sounds[i] + ".wav");
+                    // Written once; the sounds never change, and a project
+                    // that uses them needs the file to stay where it is.
+                    if (! file.existsAsFile() || file.getSize() == 0)
+                        writeWav24 (file, audio, audio.getNumSamples(), kRate);
+
+                    for (int L = 0; L < kNumLayers; ++L)
+                        setLayerAudioUndoable (i, L, L == 0 ? std::make_shared<const Sample> (std::move (audio), kRate)
+                                                            : nullptr,
+                                               L == 0 ? file.getFullPathName() : juce::String());
+                    // No pad name: the file name ("01 Kick.wav") already says
+                    // it, and a name would outlive an undo of the samples.
+                    padNames[(std::size_t) i].clear();
+                }
+                break;
+            }
+
             default: break;
         }
 
-        setStatus ("Loaded factory kit " + names[index]
-                   + " - settings only, samples unchanged");
+        if (index == 4)
+            setStatus ("Loaded factory kit " + names[index] + ": "
+                       + starter::soundNames().joinIntoString (", ") + " on pads 1 to "
+                       + juce::String (starter::soundNames().size()));
+        else
+            setStatus ("Loaded factory kit " + names[index]
+                       + " - settings only, samples unchanged");
 
         // Keep the host's program selector in step when the kit came from the
         // editor rather than from the host.
@@ -4287,7 +4641,7 @@ namespace asampler
 
         for (int i = 0; i < kNumPads; ++i)
             for (int L = 0; L < kNumLayers; ++L)
-                setLayerAudio (i, L, nullptr, {});
+                setLayerAudioUndoable (i, L, nullptr, {});
 
         // Names describe the samples just removed.
         for (auto& n : padNames)
@@ -4770,6 +5124,7 @@ namespace asampler
 
     void ASamplerProcessor::timerCallback()
     {
+        syncWithReaper();
         processEditAuditions();
         processPendingNoteLearn();
 
@@ -5127,6 +5482,15 @@ namespace asampler
 
     void ASamplerProcessor::setStateInformation (const void* data, int size)
     {
+        // Restoring is not a change to report back to the host's undo: in
+        // REAPER this is often REAPER's own undo putting the state back.
+        struct RestoreScope
+        {
+            std::atomic<int>& depth;
+            explicit RestoreScope (std::atomic<int>& d) : depth (d) { ++depth; }
+            ~RestoreScope() { --depth; }
+        } restoreScope { restoringState };
+
         auto xml = getXmlFromBinary (data, size);
         if (xml == nullptr) return;
 
@@ -5282,6 +5646,8 @@ namespace asampler
 
         const auto clean = name.trim().substring (0, 64);
         padNames[(std::size_t) padIndex] = clean;
+        if (restoringState.load() == 0)
+            hostStateDirty.store (true);
         setStatus (clean.isEmpty() ? "Pad " + juce::String (padIndex + 1) + " name cleared"
                                    : "Pad " + juce::String (padIndex + 1) + " named " + clean);
     }
@@ -5347,6 +5713,13 @@ namespace asampler
         if (auto* p = state.getParameter (padParamSpecs()[(std::size_t) controlIndex].idFor (padIndex + 1)))
             return p->getCurrentValueAsText();
         return {};
+    }
+
+    juce::RangedAudioParameter* ASamplerProcessor::getPadControlParameter (int padIndex, int controlIndex) const
+    {
+        if (padIndex < 0 || padIndex >= kNumPads || controlIndex < 0 || controlIndex >= getNumPadControls())
+            return nullptr;
+        return state.getParameter (padParamSpecs()[(std::size_t) controlIndex].idFor (padIndex + 1));
     }
 
     namespace
@@ -5756,6 +6129,38 @@ namespace asampler
     void ASamplerProcessor::stopPreview()
     {
         previewActive.store (false, std::memory_order_release);
+    }
+
+    void ASamplerProcessor::previewFile (const juce::File& file)
+    {
+        const int request = filePreviewRequest.fetch_add (1) + 1;
+        std::weak_ptr<bool> weakAlive = alive;
+
+        // The destructor drains the pool, so a job that runs has `this`.
+        loaderPool.addJob ([this, file, request, weakAlive]
+        {
+            if (filePreviewRequest.load() != request)
+                return;   // superseded before it started
+
+            std::shared_ptr<const Sample> sample;
+            if (readSampleFile (file, sample) != LoadResult::Success)
+                return;
+
+            juce::MessageManager::callAsync ([this, sample, request, weakAlive]
+            {
+                const auto stillAlive = weakAlive.lock();
+                if (stillAlive == nullptr || ! *stillAlive)
+                    return;
+                if (filePreviewRequest.load() == request)
+                    playPreview (sample);
+            });
+        });
+    }
+
+    void ASamplerProcessor::stopFilePreview()
+    {
+        filePreviewRequest.fetch_add (1);
+        stopPreview();
     }
 
     // ---------------- Slice-point scrubbing ----------------

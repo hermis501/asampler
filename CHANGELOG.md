@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+- **Pad settings in the plugin window.** Every setting of the selected pad is
+  now in ASampler's own window too, one section at a time, as knobs, lists and
+  checkboxes. Until now a pad's filter or envelope could only be reached
+  through the host's parameter list, which REAPER has and most other DAWs
+  (Studio One, Live, Logic) don't. It works with a mouse and with a screen
+  reader: arrows change a knob by 1% (Shift 10%), Home and End go to the ends,
+  Enter types a value, and double-click resets it.
+- **Sample browser.** Ctrl+B swaps the pad settings for a list of the samples
+  in a folder. Moving onto a file plays it; Enter loads it onto the selected
+  pad or opens a folder, Backspace goes up, and a letter jumps to the next
+  name starting with it. Files can be dragged onto a pad, or out into the DAW.
+- **Pad menu.** Shift+F10, the Applications key, a right-click on a pad or the
+  More actions button open a menu with every action for the selected pad. The
+  less common actions moved there from the button rows, so Tab gets through
+  the window faster; their shortcuts are unchanged.
+- **For sighted users:** a waveform of the selected pad with draggable Start,
+  End and loop markers, a playhead, zoom, and other pads' slices of the same
+  file marked; pads coloured by what they hold (loaded, built-in tone,
+  missing), lighting up when they play; an output meter; graphs for the
+  envelope, filter and LFOs; tooltips on the buttons. The window can be
+  resized or set from 75% to 200%, and remembers its size. None of these take
+  a Tab stop or add anything for a screen reader to read.
+- **Save a pad as audio.** Drag a pad out of the window, or use "Save Pad as
+  audio file" in the pad menu, to get a WAV of it rendered with all its
+  settings, as a bounce would be.
+- **Starter Drums** factory kit (program 5): eight drum sounds made by
+  ASampler itself (kick, hats, snare, clap, rim, tom, 808) on pads 1 to 8, so
+  there is something to play before you have samples. The other factory kits
+  are unchanged and keep their program numbers.
+- **Tune** (U, or the pad menu): detects the sample's pitch and sets the pad's
+  Pitch so it plays in tune, on the nearest note, or on its root key in
+  Keyboard mode.
+- **Hold** and **Filter Env Hold**: keep the amp or filter envelope at full
+  level for a while after the attack, before it decays. At 0, the default,
+  nothing changes.
+- **Exit Loop On Release**: letting go of a looping note leaves the loop and
+  plays the sample's own tail.
+- **REAPER undo:** a sample or pad name change (load, browse, chop,
+  rename) also adds a step to REAPER's undo history, so REAPER's Undo can take
+  it back.
+- **REAPER scripts can load samples:** the new "ASampler - Load file onto pad"
+  script loads a file onto a pad without opening the window, and the manual
+  documents the simple protocol for writing your own.
+- **Fixed:** Undo after Reset or Clear all pads now brings the samples back
+  too. Before, it only restored the settings, though the buttons said it
+  would restore the pads.
+
 ## 1.0.0
 
 First public release, for Windows and macOS. The Mac version comes from the

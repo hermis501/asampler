@@ -16,6 +16,8 @@ add_executable(ASamplerTests
     test_release.cpp
     test_analysis.cpp
     test_editor.cpp
+    test_sighted.cpp
+    test_sampling.cpp
     test_layers.cpp
     test_workflow.cpp
 )

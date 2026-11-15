@@ -205,6 +205,16 @@ namespace asampler
         }
     }
 
+    void VoicePool::collectPlayFractions (float* out, int numPads) const noexcept
+    {
+        for (int p = 0; p < numPads; ++p)
+            out[p] = -1.0f;
+
+        for (const auto& slot : slots)
+            if (slot.padIndex >= 0 && slot.padIndex < numPads && slot.voice.isActive())
+                out[slot.padIndex] = juce::jmax (out[slot.padIndex], slot.voice.getPlayFraction());
+    }
+
     int VoicePool::countActive() const noexcept
     {
         int count = 0;

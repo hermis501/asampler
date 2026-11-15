@@ -7,7 +7,9 @@
 #include "engine/Voice.h"
 
 #include <cmath>
+#include <algorithm>
 #include <memory>
+#include <vector>
 
 using namespace asampler;
 
@@ -704,4 +706,132 @@ TEST_CASE ("LFO sync locks the rate to the host tempo", "[lfo]")
     REQUIRE (lfoRateFor (3.0f, LfoSync::OneBar, 120.0) == Catch::Approx (0.5f));
     REQUIRE (lfoRateFor (3.0f, LfoSync::EighthTriplet, 90.0) == Catch::Approx (4.5f));
     REQUIRE (lfoRateFor (3.0f, LfoSync::QuarterDotted, 120.0) == Catch::Approx (2.0f / 1.5f));
+}
+
+// ---------------- Hold (AHDSR) ----------------
+
+TEST_CASE ("HoldEnvelope with no hold is juce::ADSR, sample for sample", "[voice][adsr][hold]")
+{
+    for (const auto& p : { juce::ADSR::Parameters { 0.01f, 0.05f, 0.5f, 0.02f },
+                           juce::ADSR::Parameters { 0.0f, 0.05f, 0.3f, 0.0f },
+                           juce::ADSR::Parameters { 0.0f, 0.0f, 1.0f, 0.1f } })
+    {
+        juce::ADSR plain;
+        HoldEnvelope held;
+        plain.setSampleRate (44100.0);
+        held.setSampleRate (44100.0);
+        plain.setParameters (p);
+        held.setParameters (p, 0.0f);
+        plain.noteOn();
+        held.noteOn();
+        for (int i = 0; i < 6000; ++i)
+        {
+            if (i == 4000) { plain.noteOff(); held.noteOff(); }
+            REQUIRE (held.getNextSample() == plain.getNextSample());
+        }
+        REQUIRE (held.isActive() == plain.isActive());
+    }
+}
+
+TEST_CASE ("Hold keeps the envelope at full level before the decay", "[voice][adsr][hold]")
+{
+    constexpr double sr = 1000.0;   // 1 sample = 1 ms
+    HoldEnvelope env;
+    env.setSampleRate (sr);
+    env.setParameters ({ 0.010f, 0.020f, 0.25f, 0.010f }, 0.050f);   // 10 ms attack, 50 ms hold
+    env.noteOn();
+
+    std::vector<float> v;
+    for (int i = 0; i < 120; ++i)
+        v.push_back (env.getNextSample());
+
+    // Peak by the end of the attack, held for 50 ms, then the decay.
+    const auto peak = (size_t) std::distance (v.begin(), std::find (v.begin(), v.end(), 1.0f));
+    REQUIRE (peak <= 10);
+    for (size_t i = peak; i <= peak + 50; ++i)
+        REQUIRE (v[i] == 1.0f);
+    REQUIRE (v[peak + 52] < 1.0f);
+    REQUIRE (v[115] == Catch::Approx (0.25f));
+
+    // No attack: the hold starts at once.
+    env.setParameters ({ 0.0f, 0.020f, 0.25f, 0.010f }, 0.030f);
+    env.reset();
+    env.noteOn();
+    for (int i = 0; i < 30; ++i)
+        REQUIRE (env.getNextSample() == 1.0f);
+    REQUIRE (env.getNextSample() < 1.0f);
+
+    // Release during the hold falls from full level, and ends.
+    env.reset();
+    env.noteOn();
+    for (int i = 0; i < 5; ++i) env.getNextSample();
+    env.noteOff();
+    const float first = env.getNextSample();
+    REQUIRE (first < 1.0f);
+    REQUIRE (first > 0.8f);
+    for (int i = 0; i < 20; ++i) env.getNextSample();
+    REQUIRE_FALSE (env.isActive());
+}
+
+TEST_CASE ("A voice with Hold stays loud longer", "[voice][adsr][hold]")
+{
+    auto sample = makeDC (44100);
+    auto render = [&] (float hold)
+    {
+        VoiceConfig cfg;
+        cfg.adsr = { 0.0f, 0.05f, 0.0f, 0.01f };   // a 50 ms decay to silence
+        cfg.holdSeconds = hold;
+        Voice voice;
+        voice.prepare (44100.0);
+        voice.start (sample, 60, 60, cfg);
+        juce::AudioBuffer<float> out (2, 8820);   // 200 ms
+        out.clear();
+        voice.renderAdding (out, 0, 8820);
+        return rms (out, 0, 4410, 441);           // 100-110 ms
+    };
+    REQUIRE (render (0.0f) < 0.01f);
+    REQUIRE (render (0.15f) > 0.5f);
+}
+
+// ---------------- Exit loop on release ----------------
+
+TEST_CASE ("Exit Loop On Release plays on past the loop after note-off", "[voice][loop][release]")
+{
+    // A ramp 0..1; loop over the first half. Without the option the voice
+    // never reads past the loop; with it, the release reaches the top half.
+    auto sample = makeRamp (4000);
+
+    for (const auto mode : { LoopMode::Forward, LoopMode::PingPong })
+    {
+        auto peakAfterRelease = [&] (bool exit)
+        {
+            VoiceConfig cfg = fastEnvelope();
+            cfg.pan           = -1.0f;
+            cfg.adsr.release  = 1.0f;     // long, so the tail is audible
+            cfg.loopMode      = mode;
+            cfg.loopStartNorm = 0.1f;
+            cfg.loopEndNorm   = 0.5f;
+            cfg.exitLoopOnRelease = exit;
+
+            Voice voice;
+            voice.prepare (44100.0);
+            voice.start (sample, 60, 60, cfg);
+            juce::AudioBuffer<float> out (2, 7000);
+            out.clear();
+            voice.renderAdding (out, 0, 3000);   // several laps
+            REQUIRE (out.getMagnitude (0, 0, 3000) < 0.51f);
+            voice.release();
+            voice.renderAdding (out, 3000, 4000);
+            return std::pair { out.getMagnitude (0, 3000, 4000), voice.isActive() };
+        };
+
+        const auto [looping, loopingActive] = peakAfterRelease (false);
+        REQUIRE (looping < 0.51f);
+        REQUIRE (loopingActive);
+
+        const auto [exited, exitedActive] = peakAfterRelease (true);
+        REQUIRE (exited > 0.8f);   // read on into the second half
+        // ...and ended at the end of the sample, long before the 1 s release.
+        REQUIRE_FALSE (exitedActive);
+    }
 }

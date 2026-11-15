@@ -208,6 +208,7 @@ jobs:
             found' CHANGELOG.md > notes.md
           test -s notes.md
           cp "scripts/ASampler - Create pad tracks.lua" artifacts/ASampler-Create-pad-tracks.lua
+          cp "scripts/ASampler - Load file onto pad.lua" artifacts/ASampler-Load-file-onto-pad.lua
           cp docs/manual.html artifacts/ASampler-manual.html
           gh release create "$GITHUB_REF_NAME" artifacts/* \
             --repo "$GITHUB_REPOSITORY" \

@@ -209,6 +209,7 @@ namespace asampler
         pitchBendSemitones      = cfg.pitchBendSemitones;
         pitchBendScale          = std::pow (2.0, static_cast<double> (cfg.pitchBendSemitones) / 12.0);
         direction               = cfg.reverse ? -1.0 : 1.0;
+        baseDirection           = direction;
 
         // Initialise glide. If either input is zero/non-positive, glide is
         // off and the voice plays at its natural pitch from sample zero.
@@ -276,6 +277,7 @@ namespace asampler
         // loop region collapses (start >= end), fall back to looping the whole
         // window so we never end up with a zero-width loop.
         loopMode = cfg.loopMode;
+        exitLoopOnRelease = cfg.exitLoopOnRelease;
         if (loopMode != LoopMode::Off && endIdx > startIdx + 1)
         {
             const float ls = juce::jlimit (0.0f, 1.0f, cfg.loopStartNorm);
@@ -313,7 +315,7 @@ namespace asampler
         hitGainScale        = (cfg.hitGainScale        > 0.0f) ? cfg.hitGainScale        : 1.0f;
         hitCutoffMultiplier = (cfg.hitCutoffMultiplier > 0.0f) ? cfg.hitCutoffMultiplier : 1.0f;
 
-        envelope.setParameters (cfg.adsr);
+        envelope.setParameters (cfg.adsr, cfg.holdSeconds);
         envelope.reset();
         envelope.noteOn();
 
@@ -322,7 +324,7 @@ namespace asampler
         filterEnvOctaves = cfg.filterEnvOctaves;
         filterEnvActive  = (cfg.filterMode != FilterMode::Off)
                         && (std::abs (filterEnvOctaves) > 0.0001f);
-        filterEnv.setParameters (cfg.filterEnvAdsr);
+        filterEnv.setParameters (cfg.filterEnvAdsr, cfg.filterEnvHoldSeconds);
         filterEnv.reset();
         if (filterEnvActive)
             filterEnv.noteOn();
@@ -435,8 +437,27 @@ namespace asampler
         active = (source != nullptr) && ! source->isEmpty() && endIdx > startIdx;
     }
 
+    float Voice::getPlayFraction() const noexcept
+    {
+        const int n = source != nullptr ? source->getNumSamples() : 0;
+        return n > 0 ? juce::jlimit (0.0f, 1.0f, static_cast<float> (readPosition / n)) : 0.0f;
+    }
+
     void Voice::release() noexcept
     {
+        // Leave the loop and play on through the rest of the window, in the
+        // direction the hit was played (a ping-pong loop may be heading
+        // backwards at this moment).
+        if (exitLoopOnRelease && loopMode != LoopMode::Off && active)
+        {
+            loopMode = LoopMode::Off;
+            if (direction != baseDirection)
+            {
+                direction = baseDirection;
+                updatePitchRatio();
+            }
+        }
+
         envelope.noteOff();
         filterEnv.noteOff();   // both envelopes release together
     }
