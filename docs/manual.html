@@ -66,7 +66,7 @@
 <h2 id="install">2. Installing</h2>
 <h3>Windows</h3>
 <ol>
-  <li>Run <code>ASampler-1.0.0-Windows-Setup.exe</code>. It is a standard installer that NVDA and JAWS read normally.</li>
+  <li>Run <code>ASampler-1.1.0-Windows-Setup.exe</code>. It is a standard installer that NVDA and JAWS read normally.</li>
   <li>If Windows SmartScreen says "Windows protected your PC", choose More info, then Run anyway. The installer is not yet code-signed.</li>
   <li>The installer puts the plugin in <code>C:\Program Files\Common Files\VST3\ASampler.vst3</code> and adds this manual to the Start menu.</li>
   <li>If you have used REAPER on this computer, the installer offers a checkbox, checked by default: <strong>Add the "Create pad tracks" action to REAPER's Actions list</strong>. Leave it checked and the routing script (<a href="#outputs">section 16</a>) is ready to use in REAPER's Actions list as "Script: ASampler - Create pad tracks.lua", with nothing to load by hand. REAPER must be closed while this happens; if it is open, the installer asks you to close it and choose Retry.</li>
@@ -75,7 +75,7 @@
 <h3>macOS</h3>
 <p>The Mac version is built automatically and passes the same tests as the Windows one, but nobody has tried it on a real Mac yet. If you do, please report how it went, especially with VoiceOver, on the project's GitHub Issues page.</p>
 <ol>
-  <li>Run <code>ASampler-1.0.0-macOS.pkg</code>. It installs the VST3 to <code>/Library/Audio/Plug-Ins/VST3</code> and the Audio Unit to <code>/Library/Audio/Plug-Ins/Components</code>. It works on macOS 11 or later, on Apple Silicon and Intel.</li>
+  <li>Run <code>ASampler-1.1.0-macOS.pkg</code>. It installs the VST3 to <code>/Library/Audio/Plug-Ins/VST3</code> and the Audio Unit to <code>/Library/Audio/Plug-Ins/Components</code>. It works on macOS 11 or later, on Apple Silicon and Intel.</li>
   <li>The package isn't signed by Apple, so macOS blocks it the first time. In Finder, open the context menu on the package (with VoiceOver, <kbd>Control</kbd>+<kbd>Option</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>), choose Open, then confirm.</li>
   <li>If your DAW still says the plugin is damaged or won't load it, run this in Terminal:<br>
   <code>sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/ASampler.vst3 /Library/Audio/Plug-Ins/Components/ASampler.component</code></li>
@@ -128,7 +128,7 @@
 <h2 id="editor">6. The editor</h2>
 <p>The editor is in six parts. <kbd>Tab</kbd> moves between them in this order:</p>
 <ol>
-  <li><strong>Heading</strong>: "ASampler 1.0.0".</li>
+  <li><strong>Heading</strong>: "ASampler 1.1.0".</li>
   <li><strong>Pad grid</strong>, one Tab stop.</li>
   <li><strong>Pad settings</strong>: the selected pad's settings as knobs, lists and checkboxes (on the right of the window). <kbd>Ctrl</kbd>+<kbd>B</kbd>, or the button after them, swaps them for the <strong>sample browser</strong> and back.</li>
   <li><strong>Pad actions</strong>: buttons for the selected pad. The most used ones are buttons; every action is in the pad menu.</li>
@@ -923,7 +923,7 @@ reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
   <li><strong>Saved state:</strong> every parameter, sample locations (kept even when missing), pad names and MIDI learn bindings, in the project or a <code>.asamplerkit</code> file.</li>
   <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 380 automated tests.</li>
 </ul>
-<p class="muted">ASampler 1.0.0. See CHANGELOG.md for the version history.</p>
+<p class="muted">ASampler 1.1.0. See CHANGELOG.md for the version history.</p>
 </main>
 </body>
 </html>

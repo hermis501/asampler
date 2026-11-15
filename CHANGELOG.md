@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - **Pad settings in the plugin window.** Every setting of the selected pad is
   now in ASampler's own window too, one section at a time, as knobs, lists and
