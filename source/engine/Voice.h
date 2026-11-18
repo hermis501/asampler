@@ -169,7 +169,16 @@ namespace asampler
                     const VoiceConfig& cfg);
 
         void release() noexcept;
+        // Silence the voice at once. Clicks if it was sounding; prefer
+        // fadeOut wherever the voice can keep rendering for a moment.
         void stop() noexcept;
+
+        // Silence the voice over `samples` output samples (a linear ramp to
+        // zero, then it deactivates), so a choke or a voice stolen for a new
+        // note doesn't click. Does nothing on an idle voice; a voice already
+        // fading keeps the shorter remaining fade.
+        void fadeOut (int samples) noexcept;
+        bool isFading() const noexcept { return active && killFadeTotal > 0; }
 
         bool isActive() const noexcept { return active; }
 
@@ -318,5 +327,7 @@ namespace asampler
         int   loopXfadeSamples = 0;
 
         bool   active = false;
+        int    killFadeTotal = 0;   // > 0 while fading out (fadeOut)
+        int    killFadeLeft  = 0;
     };
 }

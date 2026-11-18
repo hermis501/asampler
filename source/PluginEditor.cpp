@@ -398,6 +398,7 @@ namespace asampler
         settingsPanel = std::make_unique<ParameterPanel> (processor);
         settingsPanel->setTitle ("Pad settings");
         settingsPanel->onKeyFirst = [this] (const juce::KeyPress& k) { return handleModeKey (k); };
+        settingsPanel->onAnnounce = [this] (const juce::String& text) { announce (text); };
         content.addAndMakeVisible (*settingsPanel);
 
         browser = std::make_unique<SampleBrowser> (processor);
@@ -749,6 +750,7 @@ namespace asampler
         {
             if (code == 'z' && ! mods.isShiftDown()) { processor.undoLastAction(); return true; }
             if (code == 'y' || (code == 'z' && mods.isShiftDown())) { processor.redoLastAction(); return true; }
+            if (code == 'a' && mods.isShiftDown()) { toggleAutomation(); return true; }
 
             if (! mods.isShiftDown())
             {
@@ -766,6 +768,7 @@ namespace asampler
                     case 'o': loadKit();                       return true;
                     case 'v': pasteFiles();                    return true;
                     case 'r': processor.toggleReaperRecord();  return true;
+                    case 'f': findSetting();                   return true;
                     case 'g': grabReaperItem();                return true;
                     case 'b': showBrowser (! browserShown);    return true;
                     default: break;
@@ -1432,7 +1435,7 @@ namespace asampler
                "U tunes the pad to the sample's detected pitch. "
                + kCmd + " S saves a kit, " + kCmd + " O opens one. "
                + kCmd + " Z undoes, " + kCmd + " Y redoes. "
-               "In REAPER, " + kCmd + " R toggles record and " + kCmd + " G grabs the selected item onto the pad. "
+               "In REAPER, " + kCmd + " R toggles record and " + kCmd + " G grabs the selected items onto the pad and the pads after it. "
                "Z X C V, A S D F, Q W E R and 1 2 3 4 play the 16 pads of the current bank while held, and "
                "send the notes to the plugin's MIDI output; with Shift they say what the pad holds. "
                "After the pads, Tab reaches the selected pad's settings: choose a section from the list, "
@@ -1441,6 +1444,10 @@ namespace asampler
                + kCmd + " B swaps the settings for the sample browser: arrows move through a folder and "
                "play each file, Enter loads it onto the selected pad or opens a folder, Backspace goes up, "
                "and a letter jumps to the next name starting with it. "
+               + kCmd + " F finds a setting by name in any section: type part of it, Up and Down choose, "
+               "Enter goes to it. "
+               "In REAPER, " + kCmd + " Shift A on a setting turns its automation envelope on, shown and armed, "
+               "or off again, keeping its points. "
                "Shift F10 or the Applications key opens the pad menu with every action for the pad. "
                "Every setting is also a parameter in the host's parameter list; "
                "the Focus group there follows the selected pad.";
@@ -1557,7 +1564,7 @@ namespace asampler
         setButtonLabel (*snapButton,     "Snap " + padN + " to transients");
         setButtonLabel (*spreadButton,   "Spread velocity layers on " + padN);
         setButtonLabel (*bounceButton,   "Bounce " + padN + " (B)");
-        setButtonLabel (*grabButton,     "Grab REAPER item onto " + padN + " (" + kCmd + "+G)");
+        setButtonLabel (*grabButton,     "Grab selected REAPER items onto " + padN + " onwards (" + kCmd + "+G)");
         setButtonLabel (*renderStretchButton,  "Render " + padN + " stretch");
         setButtonLabel (*renderFormantsButton, "Render " + padN + " formants");
         setButtonLabel (*tuneButton,     "Tune " + padN + " (U)");
@@ -1633,6 +1640,22 @@ namespace asampler
 
     // ---- Browser, pad menu, window size, moving parts ----------------------------
 
+    void ASamplerEditor::toggleAutomation()
+    {
+        if (auto* param = settingsPanel->isVisible() ? settingsPanel->getFocusedParameter() : nullptr)
+            processor.toggleReaperAutomation (param);
+        else
+            announce ("Move to a setting in the pad settings first, then press " + kCmd
+                      + " Shift A. " + kCmd + " F finds one by name.");
+    }
+
+    void ASamplerEditor::findSetting()
+    {
+        if (browserShown)
+            showBrowser (false);
+        settingsPanel->startSearch();
+    }
+
     void ASamplerEditor::showBrowser (bool shouldShow)
     {
         if (shouldShow && ! browserOpened)
@@ -1686,7 +1709,8 @@ namespace asampler
 
     namespace
     {
-        constexpr int kSaveAudioItem = 1000;
+        constexpr int kSaveAudioItem      = 1000;
+        constexpr int kAutomationOffItem  = 1001;
     }
 
     juce::PopupMenu ASamplerEditor::buildPadMenu (int padIndex)
@@ -1734,6 +1758,8 @@ namespace asampler
         menu.addSubMenu ("Play and edit", edit);
         menu.addSubMenu ("Copy and apply", pads);
         menu.addSubMenu ("Chop, bounce and render", render);
+        menu.addItem (kAutomationOffItem, "Turn off all ASampler automation in REAPER",
+                      processor.getReaperApi().canAutomate());
         return menu;
     }
 
@@ -1742,6 +1768,11 @@ namespace asampler
         if (itemId == kSaveAudioItem)
         {
             savePadAudioAs();
+            return;
+        }
+        if (itemId == kAutomationOffItem)
+        {
+            processor.disableAllReaperAutomation();
             return;
         }
 

@@ -200,6 +200,8 @@ namespace asampler
                        const VoiceConfig& cfg)
     {
         source = std::move (src);
+        killFadeTotal = 0;
+        killFadeLeft  = 0;
 
         const double semitones = static_cast<double> (triggerNote - rootNote)
                                + static_cast<double> (cfg.pitchSemitones);
@@ -555,6 +557,22 @@ namespace asampler
         envelope.reset();
         active = false;
         source.reset();
+        killFadeTotal = 0;
+        killFadeLeft  = 0;
+    }
+
+    void Voice::fadeOut (int samples) noexcept
+    {
+        if (! active)
+            return;
+        samples = juce::jmax (1, samples);
+        if (killFadeTotal > 0 && killFadeLeft <= samples)
+            return;   // already fading, and sooner
+        // Start the ramp from the gain the voice has now, so shortening a
+        // fade never jumps up.
+        const float now = killFadeTotal > 0 ? (float) killFadeLeft / (float) killFadeTotal : 1.0f;
+        killFadeTotal = juce::jmax (1, (int) std::lround (samples / juce::jmax (1.0e-3f, now)));
+        killFadeLeft  = samples;
     }
 
     void Voice::renderAdding (juce::AudioBuffer<float>& output, int startSample, int numSamples)
@@ -938,6 +956,13 @@ namespace asampler
                 }
             }
 
+            if (killFadeTotal > 0)
+            {
+                const float g = (float) killFadeLeft / (float) killFadeTotal;
+                outL *= g;
+                outR *= g;
+            }
+
             output.addSample (0, startSample + i, outL);
             output.addSample (1, startSample + i, outR);
 
@@ -975,10 +1000,12 @@ namespace asampler
             if (pitchChanged)
                 updatePitchRatio();
 
-            if (! envelope.isActive())
+            if (! envelope.isActive() || (killFadeTotal > 0 && --killFadeLeft <= 0))
             {
                 active = false;
                 source.reset();
+                killFadeTotal = 0;
+                killFadeLeft  = 0;
                 break;
             }
         }

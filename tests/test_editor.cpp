@@ -2,8 +2,10 @@
 // what the keyboard does.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "PluginEditor.h"
+#include "ParameterPanel.h"
 
 using namespace asampler;
 
@@ -465,4 +467,98 @@ TEST_CASE ("The Layers section is split into one page per layer", "[editor][sett
                 ++total;
     }
     REQUIRE (total == ASamplerProcessor::getNumPadControls());
+}
+
+TEST_CASE ("Find setting matches names in any section, best first", "[editor][findsetting]")
+{
+    auto names = [] (const juce::String& q)
+    {
+        juce::StringArray out;
+        for (int i : ParameterPanel::findSettings (q))
+            out.add (ASamplerProcessor::getPadControlName (i));
+        return out;
+    };
+
+    // Name starts first, then word starts, then anywhere.
+    const auto cutoff = names ("cutoff");
+    REQUIRE (cutoff.contains ("Filter Cutoff"));
+    REQUIRE (names ("filter c")[0] == "Filter Cutoff");
+    REQUIRE (names ("rel")[0] == "Release");
+    REQUIRE (names ("env rel").contains ("Filter Env Release"));
+    REQUIRE (names ("lfo 2 rate")[0] == "LFO 2 Rate");
+    REQUIRE (names ("  ").isEmpty());
+    REQUIRE (names ("zzzz").isEmpty());
+    // Case doesn't matter.
+    REQUIRE (names ("FILTER CUTOFF") == names ("filter cutoff"));
+}
+
+namespace
+{
+    // Types into a text box the way keys arrive: one keyPressed per character.
+    void typeInto (juce::TextEditor& box, const juce::String& text)
+    {
+        box.setText ({}, false);
+        for (auto c : text)
+            box.keyPressed (juce::KeyPress ((int) c, 0, c));
+    }
+}
+
+TEST_CASE ("Ctrl+F finds a setting and goes to its section", "[editor][findsetting]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+    juce::StringArray spoken;
+    panel.onAnnounce = [&spoken] (const juce::String& s) { spoken.add (s); };
+
+    REQUIRE (panel.getSections()[panel.getSectionIndex()] != "Filter");
+    REQUIRE (editor.keyPressed (juce::KeyPress ('f', juce::ModifierKeys::commandModifier, 0)));
+    REQUIRE (panel.isSearching());
+
+    auto& box = panel.getSearchBox();
+    typeInto (box, "filter cut");
+    REQUIRE_FALSE (spoken.isEmpty());
+    REQUIRE_THAT (spoken.getReference (spoken.size() - 1).toStdString(),
+                  Catch::Matchers::StartsWith ("Filter Cutoff, Filter, 1 of"));
+
+    // Down moves to the next match, Up comes back.
+    typeInto (box, "release");
+    const int before = spoken.size();
+    REQUIRE (box.keyPressed (juce::KeyPress (juce::KeyPress::downKey)));
+    REQUIRE (spoken.size() == before + 1);
+    REQUIRE_THAT (spoken.getReference (spoken.size() - 1).toStdString(), Catch::Matchers::ContainsSubstring ("2 of"));
+    REQUIRE (box.keyPressed (juce::KeyPress (juce::KeyPress::upKey)));
+    REQUIRE_THAT (spoken.getReference (spoken.size() - 1).toStdString(), Catch::Matchers::StartsWith ("Release, Envelope, 1 of"));
+
+    // Enter goes there and ends the search.
+    typeInto (box, "filter cutoff");
+    REQUIRE (box.keyPressed (juce::KeyPress (juce::KeyPress::returnKey)));
+    REQUIRE_FALSE (panel.isSearching());
+    REQUIRE (panel.getSections()[panel.getSectionIndex()] == "Filter");
+    REQUIRE (panel.findControl ("Filter Cutoff") != nullptr);
+
+    // No match: said so, and Enter stays in the search.
+    REQUIRE (editor.keyPressed (juce::KeyPress ('f', juce::ModifierKeys::commandModifier, 0)));
+    typeInto (box, "qqq");
+    REQUIRE (spoken.getReference (spoken.size() - 1) == "No setting matches qqq");
+    REQUIRE (box.keyPressed (juce::KeyPress (juce::KeyPress::returnKey)));
+    REQUIRE (panel.isSearching());
+
+    // Escape ends it without moving anywhere.
+    REQUIRE (box.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)));
+    REQUIRE_FALSE (panel.isSearching());
+    REQUIRE (panel.getSections()[panel.getSectionIndex()] == "Filter");
+}
+
+TEST_CASE ("Ctrl+F from the sample browser brings the settings back", "[editor][findsetting]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    REQUIRE (editor.keyPressed (juce::KeyPress ('b', juce::ModifierKeys::commandModifier, 0)));
+    REQUIRE_FALSE (editor.getSettingsPanel().isVisible());
+    REQUIRE (editor.keyPressed (juce::KeyPress ('f', juce::ModifierKeys::commandModifier, 0)));
+    REQUIRE (editor.getSettingsPanel().isVisible());
+    REQUIRE (editor.getSettingsPanel().isSearching());
 }

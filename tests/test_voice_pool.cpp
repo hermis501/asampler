@@ -4,6 +4,7 @@
 #include "engine/Voice.h"
 #include "engine/VoicePool.h"
 
+#include <cmath>
 #include <memory>
 
 using namespace asampler;
@@ -104,7 +105,7 @@ TEST_CASE ("VoicePool steals the oldest slot when full", "[pool]")
     REQUIRE (pool.countActive() == 2);
 }
 
-TEST_CASE ("VoicePool chokePads hard-stops voices in the group immediately", "[pool][choke]")
+TEST_CASE ("VoicePool chokePads stops voices in the group at once (they only fade out)", "[pool][choke]")
 {
     VoicePool pool;
     pool.prepare (44100.0, 8);
@@ -118,6 +119,15 @@ TEST_CASE ("VoicePool chokePads hard-stops voices in the group immediately", "[p
     const int chokeTargets[] = { 0, 2 };
     pool.chokePads (chokeTargets, 2);
 
+    REQUIRE (pool.countActive() == 1);
+    REQUIRE_FALSE (pool.hasActivePad (0));
+    REQUIRE (pool.countFading() == 2);
+
+    // The fade is over within a few milliseconds.
+    juce::AudioBuffer<float> out (2, 512);
+    out.clear();
+    pool.renderAdding (out, 0, 512);
+    REQUIRE (pool.countFading() == 0);
     REQUIRE (pool.countActive() == 1);
 }
 
@@ -171,4 +181,132 @@ TEST_CASE ("VoicePool per-pad render routes voices to their pad's destination",
     REQUIRE (bufferEnergy (destPad0) > 0.0f);
     REQUIRE (bufferEnergy (destPad1) > 0.0f);
     REQUIRE (bufferEnergy (sink)     == 0.0f);
+}
+
+namespace
+{
+    std::shared_ptr<const Sample> makeSilence (int numSamples)
+    {
+        juce::AudioBuffer<float> buf (1, numSamples);
+        buf.clear();
+        return std::make_shared<const Sample> (std::move (buf), 44100.0);
+    }
+
+    // Largest step between neighbouring output samples.
+    float largestStep (const juce::AudioBuffer<float>& b, int from, int to)
+    {
+        float worst = 0.0f;
+        for (int i = from + 1; i < to; ++i)
+            worst = juce::jmax (worst, std::abs (b.getSample (0, i) - b.getSample (0, i - 1)));
+        return worst;
+    }
+}
+
+TEST_CASE ("A choked voice fades out instead of clicking", "[pool][choke][declick]")
+{
+    VoicePool pool;
+    pool.prepare (44100.0, 8);
+    pool.triggerPad (0, makeDC (44100), 60, instantConfig());
+
+    juce::AudioBuffer<float> out (2, 400);
+    out.clear();
+    pool.renderAdding (out, 0, 100);
+    const int choke[] = { 0 };
+    pool.chokePads (choke, 1);
+    pool.renderAdding (out, 100, 300);
+
+    const int fade = (int) std::lround (VoicePool::kStopFadeSeconds * 44100.0);
+    // Full level up to the choke, then a ramp: no step bigger than one
+    // ramp increment, and silence once it is done.
+    REQUIRE (out.getSample (0, 99) > 0.5f);
+    REQUIRE (out.getSample (0, 100 + fade / 2) > 0.1f);
+    REQUIRE (largestStep (out, 90, 400) < 2.0f / (float) fade);
+    REQUIRE (out.getSample (0, 100 + fade + 2) == 0.0f);
+    REQUIRE (pool.countFading() == 0);
+}
+
+TEST_CASE ("A mono pad's retrigger fades the old note out", "[pool][declick]")
+{
+    VoicePool pool;
+    pool.prepare (44100.0, 8);
+    pool.triggerPad (0, makeDC (44100), 60, instantConfig(), 1);
+
+    juce::AudioBuffer<float> out (2, 400);
+    out.clear();
+    pool.renderAdding (out, 0, 100);
+
+    // The new note is silent, so the output is the old note alone.
+    pool.triggerPad (0, makeSilence (44100), 61, instantConfig(), 1);
+    REQUIRE (pool.countActive() == 1);    // still one note: the cap holds
+    REQUIRE (pool.countFading() == 1);
+    pool.renderAdding (out, 100, 300);
+
+    const int fade = (int) std::lround (VoicePool::kStopFadeSeconds * 44100.0);
+    REQUIRE (largestStep (out, 90, 400) < 2.0f / (float) fade);
+    REQUIRE (out.getSample (0, 100 + fade + 2) == 0.0f);
+    REQUIRE (pool.countFading() == 0);
+    REQUIRE (pool.countActive() == 1);
+}
+
+TEST_CASE ("A full pool reuses a fading voice before a sounding one", "[pool][declick]")
+{
+    VoicePool pool;
+    pool.prepare (44100.0, 2);
+    auto sample = makeDC (44100);
+    pool.triggerPad (0, sample, 60, instantConfig());
+    pool.triggerPad (1, sample, 61, instantConfig());
+
+    const int choke[] = { 0 };
+    pool.chokePads (choke, 1);            // pad 0 fading, pad 1 sounding
+    pool.triggerPad (2, sample, 62, instantConfig());
+
+    REQUIRE (pool.hasActivePad (1));      // the older-but-fading pad 0 gave way
+    REQUIRE (pool.hasActivePad (2));
+    REQUIRE (pool.countActive() == 2);
+    REQUIRE (pool.countFading() == 0);
+}
+
+TEST_CASE ("A fading voice is not released, choked or stolen again", "[pool][declick]")
+{
+    VoicePool pool;
+    pool.prepare (44100.0, 8);
+    auto sample = makeDC (44100);
+    pool.triggerPad (0, sample, 60, releaseConfig (2.0f), 1);
+    pool.triggerPad (0, sample, 60, releaseConfig (2.0f), 1);   // first one fades
+    REQUIRE (pool.countFading() == 1);
+
+    // Another retrigger steals the newer note, not the fading one, and the
+    // pad still holds exactly one note.
+    pool.triggerPad (0, sample, 60, releaseConfig (2.0f), 1);
+    REQUIRE (pool.countActive() == 1);
+    REQUIRE (pool.countFading() == 2);
+
+    // Releasing the pad releases only the note; the fades end on time even
+    // though the release is two seconds long.
+    pool.releasePad (0);
+    juce::AudioBuffer<float> out (2, 512);
+    out.clear();
+    pool.renderAdding (out, 0, 512);
+    REQUIRE (pool.countFading() == 0);
+    REQUIRE (pool.countActive() == 1);    // the released note is in its tail
+}
+
+TEST_CASE ("fadeOut keeps the gain continuous when a fade is shortened", "[voice][declick]")
+{
+    Voice v;
+    v.prepare (44100.0);
+    VoiceConfig cfg;
+    cfg.adsr = { 0.0f, 0.0f, 1.0f, 0.0f };
+    v.start (makeDC (44100), 60, 60, cfg);
+
+    juce::AudioBuffer<float> out (2, 300);
+    out.clear();
+    v.fadeOut (200);
+    v.renderAdding (out, 0, 100);         // halfway down
+    v.fadeOut (20);                       // shorter: continues from there
+    v.renderAdding (out, 100, 200);
+    REQUIRE (largestStep (out, 0, 300) < 0.05f);
+    REQUIRE_FALSE (v.isActive());
+    v.fadeOut (10);                       // idle: no effect
+    REQUIRE_FALSE (v.isFading());
 }

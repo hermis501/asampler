@@ -82,6 +82,22 @@ namespace asampler
                 api.getTrackGuid            = reinterpret_cast<void* (*) (void*)> (get ("GetTrackGUID"));
                 api.guidToString            = reinterpret_cast<void (*) (const void*, char*)> (get ("guidToString"));
 
+                api.countMediaItems         = reinterpret_cast<int (*) (void*)> (get ("CountMediaItems"));
+                api.getMediaItem            = reinterpret_cast<void* (*) (void*, int)> (get ("GetMediaItem"));
+                api.getSetMediaItemInfoString = reinterpret_cast<bool (*) (void*, const char*, char*, bool)> (get ("GetSetMediaItemInfo_String"));
+                api.getMediaItemInfoValue   = reinterpret_cast<double (*) (void*, const char*)> (get ("GetMediaItemInfo_Value"));
+                api.setMediaItemSelected    = reinterpret_cast<void (*) (void*, bool)> (get ("SetMediaItemSelected"));
+                api.selectAllMediaItems     = reinterpret_cast<void (*) (void*, bool)> (get ("SelectAllMediaItems"));
+                api.updateArrange           = reinterpret_cast<void (*) ()> (get ("UpdateArrange"));
+
+                api.getTouchedOrFocusedFX   = reinterpret_cast<bool (*) (int, int*, int*, int*, int*, int*)> (get ("GetTouchedOrFocusedFX"));
+                api.getTrack                = reinterpret_cast<void* (*) (void*, int)> (get ("GetTrack"));
+                api.getMasterTrack          = reinterpret_cast<void* (*) (void*)> (get ("GetMasterTrack"));
+                api.trackFXGetParamName     = reinterpret_cast<bool (*) (void*, int, int, char*, int)> (get ("TrackFX_GetParamName"));
+                api.getFXEnvelope           = reinterpret_cast<void* (*) (void*, int, int, bool)> (get ("GetFXEnvelope"));
+                api.getSetEnvelopeInfoString = reinterpret_cast<bool (*) (void*, const char*, char*, bool)> (get ("GetSetEnvelopeInfo_String"));
+                api.trackListAdjustWindows  = reinterpret_cast<void (*) (bool)> (get ("TrackList_AdjustWindows"));
+
                 // Kept (with the reference queryInterface added) so the parent
                 // track can be asked for later; released in the destructor.
                 reaperHost = rh;

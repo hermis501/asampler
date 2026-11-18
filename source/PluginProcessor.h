@@ -977,7 +977,24 @@ namespace asampler
         // Render the one selected REAPER item (glue, with its fades, rate,
         // volume and take FX), copy the result to the app-data folder and load
         // it onto `padIndex`. REAPER's project is restored with an undo.
+        //
+        // With several items selected, each is rendered the same way, one at
+        // a time (glue would merge touching items), in timeline order onto
+        // `padIndex`, the next pad and so on, up to pad 32. The status says
+        // which pads were filled and which loaded pads were replaced; the
+        // selection is put back afterwards.
         bool grabReaperItem (int padIndex, const juce::File& outputDir = {});
+
+        // REAPER automation for one of ASampler's parameters, from the
+        // plugin window (Ctrl+Shift+A on a setting). Off or missing: the
+        // envelope is created if needed, made active, shown and armed. On:
+        // made inactive, hidden and disarmed, keeping its points. Needs the
+        // ASampler window to be REAPER's focused FX, which it is while the
+        // user is in it.
+        bool toggleReaperAutomation (juce::AudioProcessorParameter* param);
+        // Every active envelope of this ASampler made inactive (points
+        // kept). Returns how many, or -1 when it couldn't look.
+        int  disableAllReaperAutomation();
 
         // A load request from a ReaScript: "<pad>|<file>", pad 1-32 or 0 for
         // the selected pad. Scripts post it with
@@ -996,6 +1013,16 @@ namespace asampler
         void parameterGestureChanged  (int parameterIndex, bool gestureIsStarting) override;
 
     private:
+        // REAPER: several selected items onto consecutive pads.
+        bool grabReaperItems (int padIndex, int selected, const juce::File& outputDir);
+
+        // This instance's place in REAPER's FX chain, when its window is the
+        // focused FX; track null otherwise.
+        struct ReaperFxSlot { void* track = nullptr; int fx = -1; };
+        ReaperFxSlot findOwnReaperFx() const;
+        // REAPER's index for `param` on that FX, checked by name; -1 if not.
+        int reaperParamIndexFor (const ReaperFxSlot& slot, juce::AudioProcessorParameter* param) const;
+
         struct PadLayer
         {
             AtomicSharedPtr<const Sample> sample;  // see engine/AtomicSharedPtr.h

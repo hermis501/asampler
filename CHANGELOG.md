@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **No more clicks when a sound is cut.** A choked pad (the open hi-hat cut by
+  the closed one) and a mono pad's previous note now fade out over 3
+  milliseconds instead of stopping dead, so 808s retrigger cleanly.
+- **Find a setting** (Ctrl+F): type part of a setting's name, in any section,
+  and Enter goes straight to it. Up and Down choose between matches.
+- **REAPER automation from the window:** Ctrl+Shift+A on a setting turns its
+  automation envelope on, shown and armed for writing, or off again keeping
+  its points. "Turn off all ASampler automation in REAPER" in the pad menu
+  turns off every active one. Needs REAPER 7 or later.
+- **Grab several REAPER items at once:** Ctrl+G with several items selected
+  puts each on its own pad, in timeline order, from the selected pad on. Each
+  is rendered on its own, so touching slices are not merged, and the result
+  says which loaded pads were replaced.
+
 ## 1.1.0
 
 - **Pad settings in the plugin window.** Every setting of the selected pad is

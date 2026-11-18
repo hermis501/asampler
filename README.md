@@ -40,7 +40,9 @@ own voice and speed.
   something to play before you have samples of your own.
 - A main stereo output plus one per pad. The included REAPER script sets up
   a routed track for every pad in one go.
-- In REAPER: Ctrl+R toggles record, Ctrl+G puts the selected item on a pad,
+- Ctrl+F finds any setting by name.
+- In REAPER: Ctrl+R toggles record, Ctrl+G puts the selected items on pads,
+  Ctrl+Shift+A turns a setting's automation envelope on or off,
   sample changes show up in REAPER's own undo, and scripts can load files
   onto pads (an example script is included).
 

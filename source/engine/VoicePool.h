@@ -12,6 +12,13 @@ namespace asampler
 
     // Fixed-size pool of Voice instances with oldest-first voice stealing.
     //
+    // A choked voice, or one stolen because its pad is at its voice cap,
+    // fades out over kStopFadeSeconds in its own slot instead of being cut
+    // (which clicks), and the new note takes a free slot. A fading voice is
+    // no longer a note: it is not counted, released, choked, stolen for the
+    // cap or reported as sounding; it only finishes its fade. Only when no
+    // slot is free does a trigger reuse one at once (a fading one first).
+    //
     // The pool knows which pad each active voice belongs to so that pad-level
     // operations (release-on-note-off, choke groups) can find matching voices
     // in O(N). Render adds all active voices into the output buffer and frees
@@ -22,6 +29,8 @@ namespace asampler
     class VoicePool
     {
     public:
+        static constexpr double kStopFadeSeconds = 0.003;
+
         void prepare (double hostSampleRate, int numVoices);
         void reset();
 
@@ -58,8 +67,8 @@ namespace asampler
         // note-off should release only the matching voice(s).
         void releasePadNote (int padIndex, int midiNote);
 
-        // Hard-stop every voice currently assigned to any pad in `padIndices`.
-        // Used by choke groups.
+        // Stop every voice currently assigned to any pad in `padIndices`,
+        // with a short fade (see the class comment). Used by choke groups.
         void chokePads (const int* padIndices, int count);
 
         // Push a new pitch bend offset (in semitones) onto every active voice.
@@ -95,7 +104,10 @@ namespace asampler
         void renderAdding (juce::AudioBuffer<float>* const* destByPad,
                            int startSample, int numSamples);
 
+        // Voices that are notes, not counting fade-outs.
         int countActive() const noexcept;
+        // Voices still finishing a fade-out (tests).
+        int countFading() const noexcept;
 
         // For each pad in [0, numPads), the play position (0..1) of one of its
         // sounding voices, or -1 when none is sounding. Audio thread only; the
@@ -113,6 +125,10 @@ namespace asampler
                                    // release can match it.
             std::uint64_t age = 0; // monotonically increasing trigger order
         };
+
+        // A slot that is a note: allocated and not fading out.
+        static bool isNote (const Slot& s) noexcept { return s.padIndex >= 0 && ! s.voice.isFading(); }
+        int stopFadeSamples() const noexcept;
 
         std::vector<Slot> slots;
         std::uint64_t ageCounter = 0;

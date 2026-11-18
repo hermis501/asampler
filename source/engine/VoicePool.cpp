@@ -47,7 +47,7 @@ namespace asampler
         {
             for (auto& slot : slots)
             {
-                if (slot.padIndex == padIndex)
+                if (slot.padIndex == padIndex && isNote (slot))
                 {
                     ++countOnPad;
                     if (oldestOnPad == nullptr || slot.age < oldestOnPad->age)
@@ -58,31 +58,46 @@ namespace asampler
 
         Slot* target = nullptr;
 
+        auto freeSlot = [this]() -> Slot*
+        {
+            for (auto& slot : slots)
+                if (slot.padIndex < 0)
+                    return &slot;
+            return nullptr;
+        };
+
         if (maxVoicesOnPad > 0 && countOnPad >= maxVoicesOnPad && oldestOnPad != nullptr)
         {
-            // Pad is at its cap — steal the oldest voice on this same pad
-            // rather than borrowing a free pool slot. This is what makes
-            // cap = 1 behave as true monophony.
-            target = oldestOnPad;
+            // Pad is at its cap: the oldest voice on this same pad gives way
+            // rather than the pad borrowing more of the pool. This is what
+            // makes cap = 1 behave as true monophony. It fades out in its own
+            // slot while the new note takes a free one; with none free it is
+            // reused at once, as before.
+            target = freeSlot();
+            if (target != nullptr)
+                oldestOnPad->voice.fadeOut (stopFadeSamples());
+            else
+                target = oldestOnPad;
         }
         else
         {
-            for (auto& slot : slots)
-            {
-                if (slot.padIndex < 0)
-                {
-                    target = &slot;
-                    break;
-                }
-            }
+            target = freeSlot();
 
             if (target == nullptr)
             {
-                // Pool is full — steal the oldest voice. Stable choice: lowest age.
-                target = &slots.front();
+                // Pool is full: reuse a slot at once. A fading voice first,
+                // since it is on its way out anyway; otherwise the oldest.
                 for (auto& slot : slots)
-                    if (slot.age < target->age)
+                    if (slot.voice.isFading() && (target == nullptr || slot.age < target->age))
                         target = &slot;
+
+                if (target == nullptr)
+                {
+                    target = &slots.front();
+                    for (auto& slot : slots)
+                        if (slot.age < target->age)
+                            target = &slot;
+                }
             }
         }
 
@@ -97,17 +112,22 @@ namespace asampler
         target->age         = ++ageCounter;
     }
 
+    int VoicePool::stopFadeSamples() const noexcept
+    {
+        return juce::jmax (1, (int) std::lround (kStopFadeSeconds * sampleRate));
+    }
+
     void VoicePool::releasePad (int padIndex)
     {
         for (auto& slot : slots)
-            if (slot.padIndex == padIndex)
+            if (slot.padIndex == padIndex && isNote (slot))
                 slot.voice.release();
     }
 
     void VoicePool::releasePadNote (int padIndex, int midiNote)
     {
         for (auto& slot : slots)
-            if (slot.padIndex == padIndex && slot.triggerNote == midiNote)
+            if (slot.padIndex == padIndex && slot.triggerNote == midiNote && isNote (slot))
                 slot.voice.release();
     }
 
@@ -142,7 +162,7 @@ namespace asampler
     bool VoicePool::hasActivePad (int padIndex) const noexcept
     {
         for (const auto& slot : slots)
-            if (slot.padIndex == padIndex)
+            if (slot.padIndex == padIndex && isNote (slot))
                 return true;
         return false;
     }
@@ -161,8 +181,8 @@ namespace asampler
             {
                 if (slot.padIndex == padIndices[i])
                 {
-                    slot.voice.stop();
-                    slot.padIndex = -1;
+                    // Keeps its pad (bus routing, mute) while it fades.
+                    slot.voice.fadeOut (stopFadeSamples());
                     break;
                 }
             }
@@ -211,7 +231,7 @@ namespace asampler
             out[p] = -1.0f;
 
         for (const auto& slot : slots)
-            if (slot.padIndex >= 0 && slot.padIndex < numPads && slot.voice.isActive())
+            if (slot.padIndex >= 0 && slot.padIndex < numPads && slot.voice.isActive() && isNote (slot))
                 out[slot.padIndex] = juce::jmax (out[slot.padIndex], slot.voice.getPlayFraction());
     }
 
@@ -219,7 +239,16 @@ namespace asampler
     {
         int count = 0;
         for (const auto& slot : slots)
-            if (slot.padIndex >= 0)
+            if (isNote (slot))
+                ++count;
+        return count;
+    }
+
+    int VoicePool::countFading() const noexcept
+    {
+        int count = 0;
+        for (const auto& slot : slots)
+            if (slot.padIndex >= 0 && slot.voice.isFading())
                 ++count;
         return count;
     }

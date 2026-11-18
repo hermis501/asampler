@@ -34,6 +34,28 @@ namespace asampler
         void*  (*getTrackGuid) (void* track)                               = nullptr;
         void   (*guidToString) (const void* guid, char* dest64)            = nullptr;
 
+        // Grabbing several items: each is glued on its own (REAPER's glue
+        // would merge touching items into one), found again by GUID after
+        // each undo, since an undo can rebuild REAPER's item objects.
+        int    (*countMediaItems) (void* project)                          = nullptr;
+        void*  (*getMediaItem) (void* project, int index)                  = nullptr;
+        bool   (*getSetMediaItemInfoString) (void* item, const char* parm, char* buf, bool set) = nullptr;
+        double (*getMediaItemInfoValue) (void* item, const char* parm)     = nullptr;
+        void   (*setMediaItemSelected) (void* item, bool selected)         = nullptr;
+        void   (*selectAllMediaItems) (void* project, bool selected)       = nullptr;
+        void   (*updateArrange) ()                                         = nullptr;
+
+        // Automation envelopes for ASampler's own parameters. The instance
+        // finds its FX slot as REAPER's focused FX, checked against its own
+        // track and the parameter's name.
+        bool   (*getTouchedOrFocusedFX) (int mode, int* track, int* item, int* take, int* fx, int* parm) = nullptr;
+        void*  (*getTrack) (void* project, int index)                      = nullptr;
+        void*  (*getMasterTrack) (void* project)                           = nullptr;
+        bool   (*trackFXGetParamName) (void* track, int fx, int parm, char* buf, int size) = nullptr;
+        void*  (*getFXEnvelope) (void* track, int fx, int parm, bool create) = nullptr;
+        bool   (*getSetEnvelopeInfoString) (void* envelope, const char* parm, char* buf, bool set) = nullptr;
+        void   (*trackListAdjustWindows) (bool isMinor)                    = nullptr;
+
         // The track (1) or project (3) this instance sits in, asked of REAPER
         // when needed (it can move). Null outside REAPER.
         std::function<void* (int)> getParent;
@@ -47,6 +69,20 @@ namespace asampler
         }
 
         bool canRecord() const noexcept { return csurfOnRecord != nullptr; }
+
+        bool canGrabSeveralItems() const noexcept
+        {
+            return canGrabItems() && countMediaItems != nullptr && getMediaItem != nullptr
+                && getSetMediaItemInfoString != nullptr && getMediaItemInfoValue != nullptr
+                && setMediaItemSelected != nullptr && selectAllMediaItems != nullptr;
+        }
+
+        bool canAutomate() const noexcept
+        {
+            return getTouchedOrFocusedFX != nullptr && getTrack != nullptr && getMasterTrack != nullptr
+                && trackFXGetParamName != nullptr && getFXEnvelope != nullptr
+                && getSetEnvelopeInfoString != nullptr && getParent != nullptr;
+        }
 
         bool canGrabItems() const noexcept
         {

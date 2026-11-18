@@ -136,6 +136,57 @@ namespace asampler
         };
     }
 
+    // The Find setting box: a one-line text field whose Up / Down / Enter /
+    // Escape belong to the search rather than the caret.
+    class ParameterPanel::SearchBox final : public juce::TextEditor
+    {
+    public:
+        explicit SearchBox (ParameterPanel& p) : panel (p)
+        {
+            setTitle ("Find setting");
+            setDescription ("Type part of a setting's name. Up and Down choose between matches, "
+                            "Enter goes to it, Escape goes back.");
+            setMultiLine (false);
+            setReturnKeyStartsNewLine (false);
+            setEscapeAndReturnKeysConsumed (false);
+            setSelectAllWhenFocused (true);
+            onTextChange = [this] { panel.searchChanged(); };
+        }
+
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            if (! key.getModifiers().isAnyModifierKeyDown())
+            {
+                const int kc = key.getKeyCode();
+                if (kc == juce::KeyPress::upKey)     { panel.moveMatch (-1);  return true; }
+                if (kc == juce::KeyPress::downKey)   { panel.moveMatch (+1);  return true; }
+                if (kc == juce::KeyPress::returnKey) { panel.acceptSearch(); return true; }
+                if (kc == juce::KeyPress::escapeKey) { panel.endSearch (true); return true; }
+            }
+            // Typing changes the text here and now; JUCE's change callback
+            // comes later, so the match is updated (and spoken) right away.
+            const bool used = juce::TextEditor::keyPressed (key);
+            panel.searchChanged();
+            return used;
+        }
+
+        void focusLost (juce::Component::FocusChangeType cause) override
+        {
+            juce::TextEditor::focusLost (cause);
+            // Clicking or tabbing away ends the search. Deferred: hiding a
+            // component inside its own focus change is asking for trouble.
+            juce::Component::SafePointer<ParameterPanel> safe (&panel);
+            juce::MessageManager::callAsync ([safe]
+            {
+                if (safe != nullptr && safe->isSearching() && ! safe->getSearchBox().hasKeyboardFocus (true))
+                    safe->endSearch (false);
+            });
+        }
+
+    private:
+        ParameterPanel& panel;
+    };
+
     // One setting: its visible name (for sight; the control carries the same
     // name as its accessible title) and the control bound to the parameter.
     struct ParameterPanel::Cell
@@ -177,6 +228,9 @@ namespace asampler
         sectionBox.onChange = [this] { showSection (sectionBox.getSelectedItemIndex()); };
         addAndMakeVisible (sectionBox);
 
+        searchBox = std::make_unique<SearchBox> (*this);
+        addChildComponent (*searchBox);
+
         viewport.setViewedComponent (&content, false);
         viewport.setScrollBarsShown (true, false);
         addAndMakeVisible (viewport);
@@ -187,6 +241,7 @@ namespace asampler
 
     ParameterPanel::~ParameterPanel()
     {
+        searchBox->onTextChange = nullptr;
         // Attachments first: they reference the controls.
         for (auto& cell : cells)
             cell->unbind();
@@ -212,6 +267,156 @@ namespace asampler
             return;
         sectionIndex = index;
         rebuild();
+    }
+
+    // ---- Find a setting ----
+
+    std::vector<int> ParameterPanel::findSettings (const juce::String& query)
+    {
+        const auto q = query.trim().toLowerCase();
+        std::vector<int> result;
+        if (q.isEmpty())
+            return result;
+
+        juce::StringArray tokens;
+        tokens.addTokens (q, " ", "");
+        tokens.removeEmptyStrings();
+
+        std::vector<std::pair<int, int>> ranked;   // rank, control index
+        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+        {
+            const auto name = ASamplerProcessor::getPadControlName (i).toLowerCase();
+            juce::StringArray words;
+            words.addTokens (name, " -/>", "");
+            words.removeEmptyStrings();
+
+            auto startsAWord = [&words] (const juce::String& t)
+            {
+                for (const auto& w : words)
+                    if (w.startsWith (t))
+                        return true;
+                return false;
+            };
+
+            int rank = -1;
+            if (name.startsWith (q))
+                rank = 0;
+            else
+            {
+                bool all = ! tokens.isEmpty();
+                for (const auto& t : tokens)
+                    all = all && startsAWord (t);
+                if (all)
+                    rank = 1;
+                else if (name.contains (q))
+                    rank = 2;
+            }
+            if (rank >= 0)
+                ranked.emplace_back (rank, i);
+        }
+
+        std::stable_sort (ranked.begin(), ranked.end(),
+                          [] (const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& r : ranked)
+            result.push_back (r.second);
+        return result;
+    }
+
+    juce::TextEditor& ParameterPanel::getSearchBox() noexcept { return *searchBox; }
+
+    bool ParameterPanel::isSearching() const noexcept { return searchBox->isVisible(); }
+
+    void ParameterPanel::startSearch()
+    {
+        if (! isSearching())
+        {
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+            focusBeforeSearch = (focused != nullptr && focused != searchBox.get()) ? focused : nullptr;
+            matches.clear();
+            matchIndex = 0;
+            lastQuery.clear();
+            searchBox->setText ({}, false);
+            searchBox->setVisible (true);
+            heading.setVisible (false);
+            resized();
+        }
+        searchBox->grabKeyboardFocus();
+    }
+
+    void ParameterPanel::searchChanged()
+    {
+        // Called on each key and again by the deferred change callback: only
+        // a real change of text starts a new search.
+        if (searchBox->getText() == lastQuery)
+            return;
+        lastQuery = searchBox->getText();
+        matches = findSettings (lastQuery);
+        matchIndex = 0;
+        if (searchBox->getText().trim().isNotEmpty())
+            announceMatch();
+    }
+
+    void ParameterPanel::moveMatch (int delta)
+    {
+        if (matches.empty())
+        {
+            announceMatch();
+            return;
+        }
+        const int n = (int) matches.size();
+        matchIndex = ((matchIndex + delta) % n + n) % n;
+        announceMatch();
+    }
+
+    void ParameterPanel::announceMatch()
+    {
+        if (! onAnnounce)
+            return;
+        if (matches.empty())
+        {
+            onAnnounce ("No setting matches " + searchBox->getText().trim());
+            return;
+        }
+        const int index = matches[(std::size_t) matchIndex];
+        onAnnounce (ASamplerProcessor::getPadControlName (index) + ", " + panelSectionOf (index)
+                    + ", " + juce::String (matchIndex + 1) + " of " + juce::String ((int) matches.size()));
+    }
+
+    void ParameterPanel::acceptSearch()
+    {
+        if (matches.empty())
+        {
+            announceMatch();
+            return;
+        }
+        const int index = matches[(std::size_t) matchIndex];
+        endSearch (false);
+        showSection (sections.indexOf (panelSectionOf (index)));
+        for (auto& cell : cells)
+            if (cell->controlIndex == index)
+            {
+                // Focus speaks the control: its name and value.
+                cell->control->grabKeyboardFocus();
+                return;
+            }
+    }
+
+    void ParameterPanel::endSearch (bool restoreFocus)
+    {
+        if (! isSearching())
+            return;
+        searchBox->setVisible (false);
+        heading.setVisible (true);
+        resized();
+
+        if (restoreFocus)
+        {
+            if (auto* back = focusBeforeSearch.getComponent(); back != nullptr && back->isShowing())
+                back->grabKeyboardFocus();
+            else
+                sectionBox.grabKeyboardFocus();
+        }
+        focusBeforeSearch = nullptr;
     }
 
     void ParameterPanel::refreshHeading()
@@ -342,6 +547,14 @@ namespace asampler
         }
     }
 
+    juce::RangedAudioParameter* ParameterPanel::getFocusedParameter() const
+    {
+        for (const auto& cell : cells)
+            if (cell->control->hasKeyboardFocus (true))
+                return processor.getPadControlParameter (pad, cell->controlIndex);
+        return nullptr;
+    }
+
     juce::Component* ParameterPanel::findControl (const juce::String& name) const
     {
         for (const auto& cell : cells)
@@ -363,6 +576,7 @@ namespace asampler
         auto top = area.removeFromTop (kHeaderHeight);
         sectionBox.setBounds (top.removeFromRight (juce::jmin (180, top.getWidth() / 2)));
         heading.setBounds (top);
+        searchBox->setBounds (top.reduced (0, 2).withTrimmedRight (6));
         area.removeFromTop (8);
 
         if (graph.isVisible())

@@ -210,6 +210,8 @@ namespace asampler
         void snapSelected();
         void bounceSelected();
         void tuneSelected();
+        void findSetting();
+        void toggleAutomation();
         void renderStretchSelected();
         void renderFormantsSelected();
         void savePadAudioAs();

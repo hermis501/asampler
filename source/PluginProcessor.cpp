@@ -6409,6 +6409,8 @@ namespace asampler
         }
 
         const int selected = reaperApi.countSelectedMediaItems (nullptr);
+        if (selected > 1 && reaperApi.canGrabSeveralItems())
+            return grabReaperItems (padIndex, selected, outputDir);
         if (selected != 1)
         {
             setStatus (selected == 0 ? juce::String ("Select one item in REAPER first")
@@ -6462,6 +6464,280 @@ namespace asampler
 
         setStatus ("Grabbed the selected REAPER item onto Pad " + juce::String (padIndex + 1));
         return true;
+    }
+
+    bool ASamplerProcessor::grabReaperItems (int padIndex, int selected, const juce::File& outputDir)
+    {
+        auto guidOf = [this] (void* item)
+        {
+            char buf[64] = {};
+            if (item == nullptr || ! reaperApi.getSetMediaItemInfoString (item, "GUID", buf, false))
+                return juce::String();
+            return juce::String::fromUTF8 (buf);
+        };
+        // Found by GUID every time: an undo can rebuild REAPER's items, so a
+        // pointer kept across one may dangle.
+        auto findItem = [this, &guidOf] (const juce::String& guid) -> void*
+        {
+            if (guid.isEmpty())
+                return nullptr;
+            const int n = reaperApi.countMediaItems (nullptr);
+            for (int i = 0; i < n; ++i)
+                if (auto* item = reaperApi.getMediaItem (nullptr, i); item != nullptr && guidOf (item) == guid)
+                    return item;
+            return nullptr;
+        };
+
+        struct Picked { juce::String guid; double position; };
+        std::vector<Picked> picked;
+        for (int i = 0; i < selected; ++i)
+            if (auto* item = reaperApi.getSelectedMediaItem (nullptr, i))
+                if (auto guid = guidOf (item); guid.isNotEmpty())
+                    picked.push_back ({ guid, reaperApi.getMediaItemInfoValue (item, "D_POSITION") });
+        if (picked.empty())
+        {
+            setStatus ("REAPER did not report the selected items");
+            return false;
+        }
+        std::stable_sort (picked.begin(), picked.end(),
+                          [] (const Picked& a, const Picked& b) { return a.position < b.position; });
+
+        const int fits = juce::jmin ((int) picked.size(), kNumPads - padIndex);
+
+        auto dir = outputDir != juce::File()
+                     ? outputDir
+                     : juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                           .getChildFile ("ASampler").getChildFile ("grabbed");
+        dir.createDirectory();
+
+        // Render each item alone, then put the project back.
+        std::vector<juce::File> files ((std::size_t) fits);
+        for (int k = 0; k < fits; ++k)
+        {
+            auto* item = findItem (picked[(std::size_t) k].guid);
+            if (item == nullptr)
+                continue;
+            reaperApi.selectAllMediaItems (nullptr, false);
+            reaperApi.setMediaItemSelected (item, true);
+
+            const int before = reaperApi.getProjectStateChangeCount (nullptr);
+            reaperApi.mainOnCommand (40257, 0);   // Item: Glue items, ignoring time selection, including fades
+
+            juce::String rendered;
+            if (auto* glued = reaperApi.getSelectedMediaItem (nullptr, 0))
+                if (auto* take = reaperApi.getActiveTake (glued))
+                    if (auto* source = reaperApi.getMediaItemTakeSource (take))
+                    {
+                        std::vector<char> buf (4096, 0);
+                        reaperApi.getMediaSourceFileName (source, buf.data(), (int) buf.size() - 1);
+                        rendered = juce::String::fromUTF8 (buf.data());
+                    }
+
+            if (reaperApi.getProjectStateChangeCount (nullptr) != before)
+                reaperApi.undoDoUndo2 (nullptr);
+
+            const juce::File renderedFile (rendered);
+            if (rendered.isEmpty() || ! renderedFile.existsAsFile())
+                continue;
+            const auto dest = dir.getNonexistentChildFile ("Pad " + juce::String (padIndex + k + 1) + " "
+                                                               + renderedFile.getFileNameWithoutExtension(),
+                                                           renderedFile.getFileExtension(), false);
+            if (renderedFile.copyFileTo (dest))
+                files[(std::size_t) k] = dest;
+        }
+
+        // The user's selection, as it was.
+        reaperApi.selectAllMediaItems (nullptr, false);
+        for (const auto& p : picked)
+            if (auto* item = findItem (p.guid))
+                reaperApi.setMediaItemSelected (item, true);
+        if (reaperApi.updateArrange != nullptr)
+            reaperApi.updateArrange();
+
+        juce::Array<int> filled, replaced;
+        const int layer = getCurrentEditLayer();
+        for (int k = 0; k < fits; ++k)
+        {
+            const auto& f = files[(std::size_t) k];
+            if (f == juce::File())
+                continue;
+            const int pad = padIndex + k;
+            const bool hadSample = padHoldsLoadedSample (pad);
+            if (loadSampleForPadLayer (pad, layer, f) == LoadResult::Success)
+            {
+                filled.add (pad + 1);
+                if (hadSample)
+                    replaced.add (pad + 1);
+            }
+        }
+
+        auto list = [] (const juce::Array<int>& pads)
+        {
+            juce::StringArray s;
+            for (int p : pads)
+                s.add (juce::String (p));
+            return s.joinIntoString (", ");
+        };
+
+        if (filled.isEmpty())
+        {
+            setStatus ("REAPER did not produce files for the selected items");
+            return false;
+        }
+
+        auto text = "Grabbed " + juce::String (filled.size()) + " REAPER items onto "
+                  + (filled.size() == 1 ? "Pad " : "Pads ") + list (filled);
+        if (! replaced.isEmpty())
+            text << ", replacing what was on " << (replaced.size() == 1 ? "Pad " : "Pads ") << list (replaced);
+        if (const int missed = (int) picked.size() - filled.size(); missed > 0)
+            text << ". " << missed << (missed == 1 ? " item was" : " items were")
+                 << (fits < (int) picked.size() ? " left out: there are only 32 pads" : " not rendered");
+        setStatus (text);
+        return true;
+    }
+
+    // ---------------- REAPER automation ----------------
+
+    ASamplerProcessor::ReaperFxSlot ASamplerProcessor::findOwnReaperFx() const
+    {
+        ReaperFxSlot slot;
+        if (! reaperApi.canAutomate())
+            return slot;
+        auto* owner = reaperApi.getParent (1);
+        if (owner == nullptr)
+            return slot;   // not on a track (take FX, monitoring FX)
+
+        int trackIndex = -2, itemIndex = -2, takeIndex = -2, fxIndex = -1, parm = -1;
+        if (! reaperApi.getTouchedOrFocusedFX (1, &trackIndex, &itemIndex, &takeIndex, &fxIndex, &parm)
+            || itemIndex != -1 || fxIndex < 0)
+            return slot;
+
+        void* focusedTrack = trackIndex == -1 ? reaperApi.getMasterTrack (nullptr)
+                                              : reaperApi.getTrack (nullptr, trackIndex);
+        if (focusedTrack == nullptr || focusedTrack != owner)
+            return slot;   // another FX has focus
+
+        slot.track = owner;
+        slot.fx    = fxIndex;
+        return slot;
+    }
+
+    int ASamplerProcessor::reaperParamIndexFor (const ReaperFxSlot& slot, juce::AudioProcessorParameter* param) const
+    {
+        const int index = getParameters().indexOf (param);
+        if (index < 0)
+            return -1;
+        // REAPER's index is the plugin's own order; the name check makes sure
+        // this really is ASampler, and that nothing shifted the list.
+        char name[512] = {};
+        if (! reaperApi.trackFXGetParamName (slot.track, slot.fx, index, name, (int) sizeof (name)))
+            return -1;
+        return juce::String::fromUTF8 (name).trim() == param->getName (512).trim() ? index : -1;
+    }
+
+    bool ASamplerProcessor::toggleReaperAutomation (juce::AudioProcessorParameter* param)
+    {
+        if (param == nullptr)
+            return false;
+        if (! reaperApi.canAutomate())
+        {
+            setStatus ("Turning on automation from here works only in REAPER 7 or later");
+            return false;
+        }
+        const auto name = param->getName (128);
+        const auto slot = findOwnReaperFx();
+        const int index = slot.track != nullptr ? reaperParamIndexFor (slot, param) : -1;
+        if (index < 0)
+        {
+            setStatus ("REAPER did not report this ASampler window as its focused FX, so " + name
+                       + " could not be found. Click in the ASampler window and try again.");
+            return false;
+        }
+
+        auto* envelope = reaperApi.getFXEnvelope (slot.track, slot.fx, index, false);
+        bool wasActive = false;
+        if (envelope != nullptr)
+        {
+            char active[32] = {};
+            if (! reaperApi.getSetEnvelopeInfoString (envelope, "ACTIVE", active, false)
+                || (active[0] != '0' && active[0] != '1'))
+            {
+                setStatus ("REAPER did not say whether the " + name + " automation is on");
+                return false;
+            }
+            wasActive = active[0] == '1';
+        }
+        else
+            envelope = reaperApi.getFXEnvelope (slot.track, slot.fx, index, true);   // creates it
+
+        if (envelope == nullptr)
+        {
+            setStatus ("REAPER could not create automation for " + name);
+            return false;
+        }
+
+        auto set = [this, envelope] (const char* attribute, bool on)
+        {
+            char text[2] = { on ? '1' : '0', 0 };
+            return reaperApi.getSetEnvelopeInfoString (envelope, attribute, text, true);
+        };
+        // ACTIVE first: an envelope left visible but inactive is harmless; one
+        // hidden but active would automate the setting out of sight.
+        if (! set ("ACTIVE", ! wasActive))
+        {
+            setStatus ("REAPER did not change the " + name + " automation");
+            return false;
+        }
+        set ("VISIBLE", ! wasActive);
+        set ("ARM", ! wasActive);
+        if (reaperApi.trackListAdjustWindows != nullptr)
+            reaperApi.trackListAdjustWindows (false);
+
+        setStatus (wasActive ? "Automation off for " + name + "; its points are kept"
+                             : "Automation on for " + name + ": the envelope is shown and armed");
+        return true;
+    }
+
+    int ASamplerProcessor::disableAllReaperAutomation()
+    {
+        if (! reaperApi.canAutomate())
+        {
+            setStatus ("Turning off automation from here works only in REAPER 7 or later");
+            return -1;
+        }
+        const auto slot = findOwnReaperFx();
+        if (slot.track == nullptr || reaperParamIndexFor (slot, getParameters().getFirst()) < 0)
+        {
+            setStatus ("REAPER did not report this ASampler window as its focused FX. "
+                       "Click in the ASampler window and try again.");
+            return -1;
+        }
+
+        int count = 0;
+        const int numParams = getParameters().size();
+        for (int i = 0; i < numParams; ++i)
+        {
+            auto* envelope = reaperApi.getFXEnvelope (slot.track, slot.fx, i, false);
+            if (envelope == nullptr)
+                continue;
+            char active[32] = {};
+            if (! reaperApi.getSetEnvelopeInfoString (envelope, "ACTIVE", active, false) || active[0] != '1')
+                continue;
+            char off[2] = { '0', 0 };
+            if (reaperApi.getSetEnvelopeInfoString (envelope, "ACTIVE", off, true))
+            {
+                char zero[2] = { '0', 0 };
+                reaperApi.getSetEnvelopeInfoString (envelope, "ARM", zero, true);
+                ++count;
+            }
+        }
+        if (count > 0 && reaperApi.trackListAdjustWindows != nullptr)
+            reaperApi.trackListAdjustWindows (false);
+
+        setStatus (count == 0 ? juce::String ("No ASampler automation was on")
+                              : "Turned off " + juce::String (count) + (count == 1 ? " automation envelope" : " automation envelopes")
+                                    + "; their points are kept");
+        return count;
     }
 }
 

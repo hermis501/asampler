@@ -156,6 +156,8 @@
   <li><strong>Knobs:</strong> the arrow keys change the value by 1% of its range, or by one step on stepped settings such as notes. <kbd>Shift</kbd> with an arrow moves 10%. <kbd>Home</kbd> and <kbd>End</kbd> go to the lowest and highest value. <kbd>Enter</kbd> opens a box to type a value, such as "480 ms" or "-6 dB"; <kbd>Enter</kbd> again sets it. With a mouse, drag a knob up or down, and double-click it to return to its default.</li>
   <li><strong>Lists</strong> (such as Mode or Filter Mode) change with the arrow keys, and <strong>checkboxes</strong> (such as Reverse) with <kbd>Space</kbd>.</li>
   <li>Selecting another pad switches the settings to that pad, and you stay on the same control.</li>
+  <li><strong>Finding a setting:</strong> <kbd>Ctrl</kbd>+<kbd>F</kbd>, from anywhere in the window, opens a <strong>Find setting</strong> box. Type part of a setting's name, in any section: "cutoff", "env rel" or "lfo 2 rate". Each word you type can be the start of any word of the name. ASampler speaks the best match and its section, for example "Filter Cutoff, Filter, 1 of 3". <kbd>Up</kbd> and <kbd>Down</kbd> move between the matches, <kbd>Enter</kbd> opens that section and puts you on the setting, and <kbd>Escape</kbd> takes you back to where you were.</li>
+  <li><strong>REAPER automation:</strong> on a setting, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> turns on its automation envelope in REAPER (creating it if needed), shows it and arms it for writing. Press it again to turn the automation off: the envelope is hidden and disarmed, and its points are kept for later. See <a href="#reaper-extras">section 16</a>.</li>
   <li>Every change can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, and the host can automate it like any parameter.</li>
 </ul>
 <p>The computer-keyboard pad keys and the shortcuts still work while a setting has focus, except the arrows, which change the setting. While you edit Start or End by ear (<kbd>T</kbd> or <kbd>O</kbd>), the arrows belong to that instead.</p>
@@ -214,7 +216,7 @@
     <tr><td>Spread velocity layers</td><td>Shares the velocity range out evenly between the pad's loaded layers, Layer 1 softest. See <a href="#layers">section 12</a>.</td></tr>
     <tr><td>Snap to transients</td><td>Moves Start and End onto the nearest detected hits.</td></tr>
     <tr><td>Bounce (B)</td><td>Renders the pad with all its settings to a new sample on the next empty pad.</td></tr>
-    <tr><td>Grab REAPER item (Ctrl+G)</td><td>Puts the selected REAPER item onto the pad, as you hear it. See <a href="#reaper-extras">section 16</a>.</td></tr>
+    <tr><td>Grab REAPER items (Ctrl+G)</td><td>Puts the selected REAPER items onto the pad and the pads after it, as you hear them. See <a href="#reaper-extras">section 16</a>.</td></tr>
     <tr><td>Render stretch / Render formants</td><td>Finishes background stretch or formant processing right away.</td></tr>
     <tr><td>Save as audio file</td><td>Renders the pad with all its settings, as Bounce does, to a WAV file you name, without loading it anywhere. In the pad menu only.</td></tr>
     <tr><td>More actions (Shift+F10)</td><td>Opens the pad menu.</td></tr>
@@ -379,9 +381,9 @@
 <h3>Scale Lock</h3>
 <p>Set the global <strong>Key</strong> and <strong>Scale</strong>, then turn on <strong>Scale Lock</strong> on a keyboard pad. Notes outside the scale snap to the nearest note in it, so a chop can't play off-key.</p>
 <h3>Choke groups</h3>
-<p>Pads with the same <strong>Choke Group</strong> stop each other. Put the closed and open hi-hats in one group and the open hat is cut when the closed hat plays.</p>
+<p>Pads with the same <strong>Choke Group</strong> stop each other. Put the closed and open hi-hats in one group and the open hat is cut when the closed hat plays. The cut is a 3 millisecond fade rather than an instant stop, so it doesn't click.</p>
 <h3>Voices</h3>
-<p><strong>Max Voices</strong> sets how many notes a pad can play at once (default 8). Set it to 1 for a monophonic pad: each new note cuts the previous one, and with Glide Mode on, slides from it. ASampler has 256 voices in total, enough for every pad to play 8 notes at once.</p>
+<p><strong>Max Voices</strong> sets how many notes a pad can play at once (default 8). Set it to 1 for a monophonic pad: each new note cuts the previous one (with a 3 millisecond fade, so an 808 doesn't click when it retriggers), and with Glide Mode on, slides from it. ASampler has 256 voices in total, enough for every pad to play 8 notes at once.</p>
 <h3>One Shot, Mute and Solo</h3>
 <ul>
   <li><strong>One Shot</strong> plays the whole slice regardless of how long the note is held. Use it for drums.</li>
@@ -529,7 +531,9 @@
 <h3 id="reaper-extras">REAPER extras</h3>
 <ul>
   <li><kbd>Ctrl</kbd>+<kbd>R</kbd> in the editor toggles REAPER's record, without leaving the plugin window.</li>
-  <li><kbd>Ctrl</kbd>+<kbd>G</kbd>, or the Grab REAPER item button, puts the one selected item in REAPER onto the selected pad as you hear it: fades, volume, playback rate and take effects included. ASampler glues a copy, takes the result, and undoes the glue, so your project is left as it was. The file is kept in <code>%APPDATA%\ASampler\grabbed</code>. Select exactly one item first; you are told if none or several are selected.</li>
+  <li><kbd>Ctrl</kbd>+<kbd>G</kbd>, or the Grab REAPER items button, puts the selected item in REAPER onto the selected pad as you hear it: fades, volume, playback rate and take effects included. ASampler glues a copy, takes the result, and undoes the glue, so your project is left as it was. The file is kept in <code>%APPDATA%\ASampler\grabbed</code>.</li>
+  <li>With <strong>several items selected</strong>, they go onto the selected pad and the pads after it, in timeline order: select the slices of a chopped loop and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to put each on its own pad. Each item is glued and undone on its own, so items that touch are not merged into one. ASampler then says which pads were filled, and which of them already held a sample that was replaced, for example "Grabbed 4 REAPER items onto Pads 5, 6, 7, 8, replacing what was on Pad 6". Items beyond Pad 32 are left out, and you are told how many. Your item selection is put back afterwards. REAPER's Undo brings back what was on the pads before. Long items take a moment each to render, and the window waits until they are done.</li>
+  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> on a setting in the pad settings turns that parameter's REAPER automation on or off, as described in <a href="#editor">section 6</a>. <strong>Turn off all ASampler automation in REAPER</strong>, at the end of the pad menu (<kbd>Shift</kbd>+<kbd>F10</kbd>), turns off every active automation envelope of this ASampler and says how many; the points are kept. Both need the ASampler window to be REAPER's focused FX, which it is while you are in it, and REAPER 7 or later.</li>
 </ul>
 <p>These work only when ASampler runs inside REAPER. In other hosts they say so.</p>
 
@@ -860,7 +864,9 @@ reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
     <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Save a kit / open a kit</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Load audio files copied in Explorer onto the pad</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>Toggle REAPER's record</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Grab the selected REAPER item onto the pad</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Grab the selected REAPER items onto the pad and the pads after it</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Find a setting by name, in any section</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></td><td>On a setting: turn its REAPER automation envelope on (shown and armed) or off</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Show the sample browser / the pad settings</td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>F10</kbd> or <kbd>Applications</kbd></td><td>Open the pad menu with every action for the pad</td></tr>
@@ -903,7 +909,7 @@ reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
   <dd>Correction prepares one version per semitone of range. Narrow the pad's Low Note to High Note range, use Key Zones, or use a shorter sample.</dd>
   <dt>The Mac says the plugin is damaged, or the DAW doesn't list it.</dt>
   <dd>Run the <code>xattr</code> command in <a href="#install">section 2</a>, then rescan plug-ins in the DAW.</dd>
-  <dt>Grab REAPER item or Ctrl+R says it works only in REAPER.</dt>
+  <dt>Grab REAPER items or Ctrl+R says it works only in REAPER.</dt>
   <dd>ASampler talks to REAPER through its VST3 interface. Use the VST3 version, inside REAPER.</dd>
   <dt>Playing pads from the computer keys records nothing.</dt>
   <dd>The notes leave on ASampler's MIDI output. The recording track needs a MIDI send from the ASampler track, and must be armed.</dd>
@@ -921,7 +927,7 @@ reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
   <li><strong>CPU:</strong> 256 voices at the original pitch use about 32% of one core at 44.1 kHz (about 0.13% per voice). A voice pitched an octave up costs about 0.35%. Stretch and formant processing happens in the background and costs nothing during playback.</li>
   <li><strong>Sample rates:</strong> any. Samples are converted on the fly, and the stretch engine adapts its analysis to the sample's rate.</li>
   <li><strong>Saved state:</strong> every parameter, sample locations (kept even when missing), pad names and MIDI learn bindings, in the project or a <code>.asamplerkit</code> file.</li>
-  <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 380 automated tests.</li>
+  <li><strong>Validation:</strong> every release passes <a href="https://github.com/Tracktion/pluginval">pluginval</a> at its strictest level, plus about 390 automated tests.</li>
 </ul>
 <p class="muted">ASampler 1.1.0. See CHANGELOG.md for the version history.</p>
 </main>

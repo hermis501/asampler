@@ -51,18 +51,46 @@ namespace asampler
         // modes (T / O) keep the arrows even while a knob has focus.
         std::function<bool (const juce::KeyPress&)> onKeyFirst;
 
+        // ---- Find a setting (Ctrl+F) ----
+        //
+        // A text box over the heading. Typing names a setting in any section
+        // ("cutoff", "env rel", "lfo 2 rate"); the best match is spoken, Up
+        // and Down move between matches, Enter shows its section and focuses
+        // it, Escape goes back to where focus was. Plain letters can't do
+        // this: on the panel they already play pads and run shortcuts.
+        void startSearch();
+        bool isSearching() const noexcept;
+        // Spoken feedback (the editor routes it to the screen reader).
+        std::function<void (const juce::String&)> onAnnounce;
+
+        // Pad control indices matching `query`, best first: the name starts
+        // with it, then every word of it starts a word of the name, then the
+        // name contains it.
+        static std::vector<int> findSettings (const juce::String& query);
+
         // ---- For tests ----
         SectionGraph& getGraph() noexcept { return graph; }
         // The control for the named setting in the current section ("Cutoff"),
         // or nullptr.
         juce::Component* findControl (const juce::String& name) const;
         juce::ComboBox&  getSectionBox() noexcept { return sectionBox; }
+        juce::TextEditor& getSearchBox() noexcept;
+
+        // The pad parameter whose control has keyboard focus, or nullptr.
+        juce::RangedAudioParameter* getFocusedParameter() const;
 
         void paint (juce::Graphics&) override;
         void resized() override;
 
     private:
         struct Cell;
+        class SearchBox;
+
+        void searchChanged();
+        void moveMatch (int delta);
+        void acceptSearch();
+        void endSearch (bool restoreFocus);
+        void announceMatch();
 
         void rebuild();
         void bind();
@@ -83,6 +111,12 @@ namespace asampler
 
         int pad          = 0;
         int sectionIndex = 0;
+
+        std::unique_ptr<SearchBox>               searchBox;
+        std::vector<int>                         matches;
+        int                                      matchIndex = 0;
+        juce::String                             lastQuery;
+        juce::Component::SafePointer<juce::Component> focusBeforeSearch;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterPanel)
     };
