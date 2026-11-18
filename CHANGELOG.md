@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - **No more clicks when a sound is cut.** A choked pad (the open hi-hat cut by
   the closed one) and a mono pad's previous note now fade out over 3
