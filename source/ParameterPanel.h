@@ -21,7 +21,8 @@ namespace asampler
     // ASampler works the same in any host, with or without sight.
     //
     // One section at a time (the Focus group's sections: Main, Trigger,
-    // Slice, ...), chosen from a combo box, so the Tab order stays short.
+    // Slice, ..., then Global for the settings that aren't per pad), chosen
+    // from a combo box, so the Tab order stays short.
     // Controls are JUCE's own Slider (drawn as a knob), ComboBox and
     // ToggleButton, which screen readers read and change like any native
     // control, and each is bound to the selected pad's real parameter: values
@@ -63,10 +64,13 @@ namespace asampler
         // Spoken feedback (the editor routes it to the screen reader).
         std::function<void (const juce::String&)> onAnnounce;
 
-        // Pad control indices matching `query`, best first: the name starts
+        // Setting indices matching `query`, best first: the name starts
         // with it, then every word of it starts a word of the name, then the
-        // name contains it.
+        // name contains it. Indices are the pad controls' (padParamSpecs()
+        // order), then the Global section's settings.
         static std::vector<int> findSettings (const juce::String& query);
+        static juce::String getSettingName (int index);
+        static int          getNumSettings();
 
         // ---- For tests ----
         SectionGraph& getGraph() noexcept { return graph; }
@@ -76,8 +80,12 @@ namespace asampler
         juce::ComboBox&  getSectionBox() noexcept { return sectionBox; }
         juce::TextEditor& getSearchBox() noexcept;
 
-        // The pad parameter whose control has keyboard focus, or nullptr.
+        // The parameter whose control has keyboard focus, or nullptr.
         juce::RangedAudioParameter* getFocusedParameter() const;
+        // The setting focused most recently (for the selected pad, if it is a
+        // pad setting), or nullptr: what the pad menu's MIDI learn binds,
+        // since opening a menu moves focus off the setting.
+        juce::RangedAudioParameter* getLastFocusedParameter() const;
 
         void paint (juce::Graphics&) override;
         void resized() override;
@@ -97,6 +105,7 @@ namespace asampler
         void layoutCells();
         void scrollToShow (juce::Component& c);
         void refreshHeading();
+        juce::RangedAudioParameter* parameterFor (int settingIndex) const;
 
         ASamplerProcessor& processor;
 
@@ -111,6 +120,7 @@ namespace asampler
 
         int pad          = 0;
         int sectionIndex = 0;
+        int lastFocusedSetting = -1;
 
         std::unique_ptr<SearchBox>               searchBox;
         std::vector<int>                         matches;

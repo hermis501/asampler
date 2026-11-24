@@ -70,6 +70,7 @@ namespace asampler
 
         ASamplerProcessor& processor;
         int pad = 0;
+        int shownEditLayer = 0;   // the title says where Load puts a sample
 
         std::shared_ptr<const Sample> sample;     // what the peaks were built from
         std::vector<float> peakMin, peakMax;      // per kBlock samples, all channels

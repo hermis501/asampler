@@ -12,11 +12,44 @@ namespace asampler
         constexpr int kTextHeight  = 18;
         constexpr int kHeaderHeight = 28;
 
+        // The settings that belong to the whole plugin rather than one pad,
+        // shown in the "Global" section. Their names must match the host
+        // parameters' (a test checks); Focused Pad is left out, since selecting
+        // a pad in the grid is the same thing.
+        struct GlobalSetting { const char* id; const char* name; };
+        constexpr GlobalSetting kGlobalSettings[] {
+            { param_ids::masterGain,     "Master Gain" },
+            { param_ids::pitchBendRange, "Pitch Bend Range" },
+            { param_ids::scaleKey,       "Key" },
+            { param_ids::scaleType,      "Scale" },
+            { param_ids::editLayer,      "Edit Layer" },
+            { param_ids::chopCount,      "Chop Count" },
+            { param_ids::chopMode,       "Chop Mode" },
+            { param_ids::keyVelocity,    "Computer Key Velocity" },
+            { param_ids::trimOnLoad,     "Trim Silence On Load" },
+            { param_ids::auditionOnEdit, "Audition On Edit" },
+            { param_ids::midiLearnArm,   "MIDI Learn" },
+        };
+        constexpr int kNumGlobalSettings = (int) std::size (kGlobalSettings);
+        const char* const kGlobalSection = "Global";
+
+        // Settings are numbered pad controls first (their padParamSpecs()
+        // index), then the global ones.
+        int  numSettings()           { return ASamplerProcessor::getNumPadControls() + kNumGlobalSettings; }
+        bool isGlobalSetting (int i) { return i >= ASamplerProcessor::getNumPadControls(); }
+        const GlobalSetting& globalSetting (int i)
+        {
+            return kGlobalSettings[(std::size_t) (i - ASamplerProcessor::getNumPadControls())];
+        }
+
         // The panel's section for a control. Same as the Focus group's, except
         // that the Layers section (some 70 settings) is split into the layer-wide
         // ones and one page per layer, "Layer 3" holding "Layer 3 Gain" etc.
         juce::String panelSectionOf (int controlIndex)
         {
+            if (isGlobalSetting (controlIndex))
+                return kGlobalSection;
+
             const auto section = ASamplerProcessor::getPadControlSection (controlIndex);
             if (section != "Layers")
                 return section;
@@ -211,10 +244,31 @@ namespace asampler
         }
     };
 
+    juce::String ParameterPanel::getSettingName (int index)
+    {
+        if (index < 0 || index >= numSettings())
+            return {};
+        return isGlobalSetting (index) ? juce::String (globalSetting (index).name)
+                                       : ASamplerProcessor::getPadControlName (index);
+    }
+
+    int ParameterPanel::getNumSettings() { return numSettings(); }
+
+    juce::RangedAudioParameter* ParameterPanel::parameterFor (int index) const
+    {
+        if (index < 0 || index >= numSettings())
+            return nullptr;
+        if (isGlobalSetting (index))
+            return processor.getState().getParameter (globalSetting (index).id);
+        return processor.getPadControlParameter (pad, index);
+    }
+
     ParameterPanel::ParameterPanel (ASamplerProcessor& proc)
         : processor (proc)
     {
-        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+        // Pad sections in Focus-group order, then Global last: appended, so
+        // the sections a user already knows keep their places in the list.
+        for (int i = 0; i < numSettings(); ++i)
             sections.addIfNotAlreadyThere (panelSectionOf (i));
 
         heading.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
@@ -222,7 +276,8 @@ namespace asampler
         addAndMakeVisible (heading);
 
         sectionBox.setTitle ("Settings section");
-        sectionBox.setDescription ("Which group of the selected pad's settings to show below.");
+        sectionBox.setDescription ("Which group of settings to show below: the selected pad's, "
+                                   "or Global for the whole plugin.");
         sectionBox.addItemList (sections, 1);
         sectionBox.setSelectedItemIndex (0, juce::dontSendNotification);
         sectionBox.onChange = [this] { showSection (sectionBox.getSelectedItemIndex()); };
@@ -282,10 +337,10 @@ namespace asampler
         tokens.addTokens (q, " ", "");
         tokens.removeEmptyStrings();
 
-        std::vector<std::pair<int, int>> ranked;   // rank, control index
-        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+        std::vector<std::pair<int, int>> ranked;   // rank, setting index
+        for (int i = 0; i < numSettings(); ++i)
         {
-            const auto name = ASamplerProcessor::getPadControlName (i).toLowerCase();
+            const auto name = getSettingName (i).toLowerCase();
             juce::StringArray words;
             words.addTokens (name, " -/>", "");
             words.removeEmptyStrings();
@@ -378,7 +433,7 @@ namespace asampler
             return;
         }
         const int index = matches[(std::size_t) matchIndex];
-        onAnnounce (ASamplerProcessor::getPadControlName (index) + ", " + panelSectionOf (index)
+        onAnnounce (getSettingName (index) + ", " + panelSectionOf (index)
                     + ", " + juce::String (matchIndex + 1) + " of " + juce::String ((int) matches.size()));
     }
 
@@ -421,6 +476,13 @@ namespace asampler
 
     void ParameterPanel::refreshHeading()
     {
+        if (sections[sectionIndex] == kGlobalSection)
+        {
+            const juce::String global ("Global settings, all pads");
+            heading.setText (global, juce::dontSendNotification);
+            heading.setTitle (global);
+            return;
+        }
         auto text = "Pad " + juce::String (pad + 1) + " settings";
         const auto name = processor.getPadName (pad);
         if (name.isNotEmpty())
@@ -437,23 +499,23 @@ namespace asampler
 
         const auto& section = sections[sectionIndex];
 
-        for (int i = 0; i < ASamplerProcessor::getNumPadControls(); ++i)
+        for (int i = 0; i < numSettings(); ++i)
         {
             if (panelSectionOf (i) != section)
                 continue;
 
-            auto* param = processor.getPadControlParameter (pad, i);
+            auto* param = parameterFor (i);
             if (param == nullptr)
                 continue;
 
             auto cell = std::make_unique<Cell>();
             cell->controlIndex = i;
-            const auto label   = ASamplerProcessor::getPadControlName (i);
+            const auto label   = getSettingName (i);
 
-            auto wire = [this] (auto& c)
+            auto wire = [this, i] (auto& c)
             {
                 c.onKeyFirst = [this] (const juce::KeyPress& k) { return onKeyFirst && onKeyFirst (k); };
-                c.onFocus    = [this, ptr = &c] { scrollToShow (*ptr); };
+                c.onFocus    = [this, ptr = &c, i] { lastFocusedSetting = i; scrollToShow (*ptr); };
             };
 
             if (param->isBoolean())
@@ -520,7 +582,7 @@ namespace asampler
         for (auto& cell : cells)
         {
             cell->unbind();
-            auto* param = processor.getPadControlParameter (pad, cell->controlIndex);
+            auto* param = parameterFor (cell->controlIndex);
             if (param == nullptr)
                 continue;
 
@@ -551,8 +613,13 @@ namespace asampler
     {
         for (const auto& cell : cells)
             if (cell->control->hasKeyboardFocus (true))
-                return processor.getPadControlParameter (pad, cell->controlIndex);
+                return parameterFor (cell->controlIndex);
         return nullptr;
+    }
+
+    juce::RangedAudioParameter* ParameterPanel::getLastFocusedParameter() const
+    {
+        return parameterFor (lastFocusedSetting);
     }
 
     juce::Component* ParameterPanel::findControl (const juce::String& name) const

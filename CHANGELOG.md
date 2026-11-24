@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Every setting is now in the plugin window.** A new **Global** section,
+  last in the pad settings' section list, holds the plugin-wide settings that
+  were reachable only through the host's parameter list: Master Gain, Pitch
+  Bend Range, Key and Scale, Edit Layer, Chop Count and Mode, Computer Key
+  Velocity, Trim Silence On Load, Audition On Edit and MIDI Learn. Ctrl+F
+  finds them too. This makes ASampler fully usable in hosts without a
+  parameter list, such as Ableton Live, FL Studio or Logic.
+- **MIDI learn from the window:** move to a setting, choose "MIDI learn" in
+  the pad menu, and move a controller.
+- The waveform's title line says which layer Load will fill when it isn't
+  Layer 1.
+- The plugin's maker name, Hermis Kasperavičius, is no longer garbled in
+  REAPER's FX browser and other hosts.
+
 ## 1.2.0
 
 - **No more clicks when a sound is cut.** A choked pad (the open hi-hat cut by

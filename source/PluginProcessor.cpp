@@ -4036,6 +4036,25 @@ namespace asampler
         lastTouchedParameterIndex.store (parameterIndex, std::memory_order_relaxed);
     }
 
+    bool ASamplerProcessor::armMidiLearn (juce::AudioProcessorParameter* target)
+    {
+        const int index = target != nullptr ? getParameters().indexOf (target) : -1;
+        auto* arm = state.getParameter (param_ids::midiLearnArm);
+        if (index < 0 || arm == nullptr || target == arm)
+        {
+            setStatus ("MIDI learn needs a setting: move to one in the settings panel first");
+            return false;
+        }
+
+        // Set the target before arming, so the audio thread never sees the arm
+        // with the previous target. The arm's own change is not a "touch"
+        // (parameterGestureChanged ignores it), so the target stays.
+        lastTouchedParameterIndex.store (index, std::memory_order_relaxed);
+        arm->setValueNotifyingHost (1.0f);
+        setStatus ("MIDI learn: move a controller to bind it to " + target->getName (128));
+        return true;
+    }
+
     void ASamplerProcessor::handleMidiLearn (const juce::MidiBuffer& input)
     {
         const auto& params = getParameters();

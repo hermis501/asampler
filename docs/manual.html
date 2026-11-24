@@ -156,6 +156,7 @@
   <li><strong>Knobs:</strong> the arrow keys change the value by 1% of its range, or by one step on stepped settings such as notes. <kbd>Shift</kbd> with an arrow moves 10%. <kbd>Home</kbd> and <kbd>End</kbd> go to the lowest and highest value. <kbd>Enter</kbd> opens a box to type a value, such as "480 ms" or "-6 dB"; <kbd>Enter</kbd> again sets it. With a mouse, drag a knob up or down, and double-click it to return to its default.</li>
   <li><strong>Lists</strong> (such as Mode or Filter Mode) change with the arrow keys, and <strong>checkboxes</strong> (such as Reverse) with <kbd>Space</kbd>.</li>
   <li>Selecting another pad switches the settings to that pad, and you stay on the same control.</li>
+  <li><strong>Global</strong>, the last section in the list, holds the settings that belong to the whole plugin rather than one pad: Master Gain, Pitch Bend Range, Key and Scale, Edit Layer, Chop Count and Chop Mode, Computer Key Velocity, Trim Silence On Load, Audition On Edit and MIDI Learn. With it, every ASampler parameter can be set from the plugin window, in any host.</li>
   <li><strong>Finding a setting:</strong> <kbd>Ctrl</kbd>+<kbd>F</kbd>, from anywhere in the window, opens a <strong>Find setting</strong> box. Type part of a setting's name, in any section: "cutoff", "env rel" or "lfo 2 rate". Each word you type can be the start of any word of the name. ASampler speaks the best match and its section, for example "Filter Cutoff, Filter, 1 of 3". <kbd>Up</kbd> and <kbd>Down</kbd> move between the matches, <kbd>Enter</kbd> opens that section and puts you on the setting, and <kbd>Escape</kbd> takes you back to where you were.</li>
   <li><strong>REAPER automation:</strong> on a setting, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> turns on its automation envelope in REAPER (creating it if needed), shows it and arms it for writing. Press it again to turn the automation off: the envelope is hidden and disarmed, and its points are kept for later. See <a href="#reaper-extras">section 16</a>.</li>
   <li>Every change can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, and the host can automate it like any parameter.</li>
@@ -271,7 +272,7 @@
 <ul>
   <li>WAV, AIFF, FLAC, Ogg Vorbis and MP3</li>
 </ul>
-<p>Files load in the background, so REAPER never freezes. You hear "Loading..." when it starts and the result when it finishes. The sample goes into the layer chosen by the global <strong>Edit Layer</strong> parameter (Layer 1 by default).</p>
+<p>Files load in the background, so REAPER never freezes. You hear "Loading..." when it starts and the result when it finishes. The sample goes into the layer chosen by the global <strong>Edit Layer</strong> parameter (Layer 1 by default), which is in the Global section of the pad settings. When it is not Layer 1, the Load button says so ("Load sample into Pad 1, layer 3"), and so does the line above the waveform.</p>
 <p>Other ways to load:</p>
 <ul>
   <li><strong>Drag and drop</strong> audio files from Explorer or Finder onto a pad.</li>
@@ -590,6 +591,13 @@ reaper.SetExtState("ASampler", "load " .. reaper.GetTrackGUID(track),
 </ul>
 
 <h2 id="midilearn">19. MIDI learn and controllers</h2>
+<p>From the plugin window, in any host:</p>
+<ol>
+  <li>Move to the setting you want to control in the pad settings (or the Global section), with Tab or <kbd>Ctrl</kbd>+<kbd>F</kbd>, or click it.</li>
+  <li>Open the pad menu (<kbd>Shift</kbd>+<kbd>F10</kbd>, or More actions) and choose <strong>MIDI learn: &lt;setting&gt;</strong>. ASampler says "MIDI learn: move a controller".</li>
+  <li>Move a knob or fader on your MIDI controller. ASampler binds that controller (CC) to the setting, says so, and disarms.</li>
+</ol>
+<p>Or through the host's parameter list:</p>
 <ol>
   <li>Set the global <strong>MIDI Learn</strong> parameter to Armed.</li>
   <li>Touch the parameter you want to control, in REAPER's parameter list or by moving its automation.</li>

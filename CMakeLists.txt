@@ -90,9 +90,12 @@ target_compile_definitions(asampler_core PUBLIC
 # built as an accessibility test harness; it is currently disabled — loaded in
 # REAPER instead.
 # -----------------------------------------------------------------------------
+# UTF-8; see the moduleinfo note below for why it needs care.
+set(ASAMPLER_VENDOR "Hermis Kasperavičius")
+
 juce_add_plugin(ASampler
     PRODUCT_NAME                "ASampler"
-    COMPANY_NAME                "Hermis Kasperavičius"
+    COMPANY_NAME                "${ASAMPLER_VENDOR}"
     BUNDLE_ID                   com.asampler.asampler
     PLUGIN_MANUFACTURER_CODE    ASmp
     PLUGIN_CODE                 ASm1
@@ -134,6 +137,28 @@ target_compile_definitions(ASampler PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
+
+# The vendor name has a "č", which two places in JUCE 8.0.15 mangle:
+#  - the Unicode class info hosts such as REAPER read (PClassInfoW::fromAscii
+#    widens each UTF-8 byte on its own). Fixed by
+#    cmake/patches/juce-vst3-unicode-class-info.patch, which CI applies to its
+#    JUCE checkout (apply it to a local JUCE too).
+#  - moduleinfo.json on Windows: JUCE's manifest helper is a separate CMake
+#    project compiled in the system code page, so the name comes out as "?".
+#    Rewritten after the build with the name from here. Not on macOS, where
+#    the helper is right and the bundle's files are sealed by its signature.
+if(WIN32)
+    file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/fix_moduleinfo_vendor.cmake" @ONLY CONTENT [=[
+file(READ "${MODULEINFO}" json)
+string(REGEX REPLACE "\"Vendor\": \"[^\"]*\"" "\"Vendor\": \"@ASAMPLER_VENDOR@\"" json "${json}")
+file(WRITE "${MODULEINFO}" "${json}")
+]=])
+    add_custom_command(TARGET ASampler_VST3 POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMODULEINFO=$<TARGET_FILE_DIR:ASampler_VST3>/../Resources/moduleinfo.json"
+            -P "${CMAKE_BINARY_DIR}/fix_moduleinfo_vendor.cmake"
+        VERBATIM)
+endif()
 
 target_link_libraries(ASampler PRIVATE
     asampler_core

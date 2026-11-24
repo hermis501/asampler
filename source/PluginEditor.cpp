@@ -1711,6 +1711,7 @@ namespace asampler
     {
         constexpr int kSaveAudioItem      = 1000;
         constexpr int kAutomationOffItem  = 1001;
+        constexpr int kMidiLearnItem      = 1002;
     }
 
     juce::PopupMenu ASamplerEditor::buildPadMenu (int padIndex)
@@ -1758,6 +1759,13 @@ namespace asampler
         menu.addSubMenu ("Play and edit", edit);
         menu.addSubMenu ("Copy and apply", pads);
         menu.addSubMenu ("Chop, bounce and render", render);
+        // MIDI learn binds the setting last used in the settings panel: the
+        // menu itself has taken focus by now, so "focused" would be nothing.
+        if (auto* learnTarget = settingsPanel != nullptr ? settingsPanel->getLastFocusedParameter() : nullptr)
+            menu.addItem (kMidiLearnItem, "MIDI learn: " + learnTarget->getName (128)
+                                              + " (then move a controller)");
+        else
+            menu.addItem (kMidiLearnItem, "MIDI learn (first move to a setting in the settings panel)", false);
         menu.addItem (kAutomationOffItem, "Turn off all ASampler automation in REAPER",
                       processor.getReaperApi().canAutomate());
         return menu;
@@ -1773,6 +1781,11 @@ namespace asampler
         if (itemId == kAutomationOffItem)
         {
             processor.disableAllReaperAutomation();
+            return;
+        }
+        if (itemId == kMidiLearnItem)
+        {
+            processor.armMidiLearn (settingsPanel != nullptr ? settingsPanel->getLastFocusedParameter() : nullptr);
             return;
         }
 

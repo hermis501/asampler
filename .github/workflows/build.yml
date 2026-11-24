@@ -57,6 +57,9 @@ jobs:
         run: |
           git clone --depth 1 --branch "$JUCE_VERSION"   https://github.com/juce-framework/JUCE.git _sdk/JUCE
           git clone --depth 1 --branch "$CATCH2_VERSION" https://github.com/catchorg/Catch2.git     _sdk/Catch2
+          # JUCE widens the VST3 vendor name byte by byte, so the "č" in it
+          # reached hosts garbled; see the note in CMakeLists.txt.
+          git -C _sdk/JUCE apply --verbose "$GITHUB_WORKSPACE/cmake/patches/juce-vst3-unicode-class-info.patch"
 
       - name: Configure
         shell: bash

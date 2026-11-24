@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include "PluginEditor.h"
 #include "ParameterPanel.h"
@@ -475,7 +476,7 @@ TEST_CASE ("Find setting matches names in any section, best first", "[editor][fi
     {
         juce::StringArray out;
         for (int i : ParameterPanel::findSettings (q))
-            out.add (ASamplerProcessor::getPadControlName (i));
+            out.add (ParameterPanel::getSettingName (i));
         return out;
     };
 
@@ -561,4 +562,115 @@ TEST_CASE ("Ctrl+F from the sample browser brings the settings back", "[editor][
     REQUIRE (editor.keyPressed (juce::KeyPress ('f', juce::ModifierKeys::commandModifier, 0)));
     REQUIRE (editor.getSettingsPanel().isVisible());
     REQUIRE (editor.getSettingsPanel().isSearching());
+}
+
+TEST_CASE ("The Global section has every plugin-wide setting, last in the list", "[editor][settings][global]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    // Appended, so the pad sections keep their places.
+    REQUIRE (panel.getSections()[0] == "Main");
+    REQUIRE (panel.getSections()[panel.getSections().size() - 1] == "Global");
+    panel.showSection (panel.getSections().indexOf ("Global"));
+
+    // Every host parameter is in the window: each pad control in a pad
+    // section (checked elsewhere), every other parameter here, except
+    // Focused Pad (the grid selects pads) and the Focus proxies.
+    juce::StringArray globalNames;
+    for (int i = ASamplerProcessor::getNumPadControls(); i < ParameterPanel::getNumSettings(); ++i)
+        globalNames.add (ParameterPanel::getSettingName (i));
+
+    for (auto* p : proc.getParameters())
+    {
+        auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p);
+        REQUIRE (withId != nullptr);
+        const auto& id = withId->paramID;
+        if (id.startsWith ("pad_") || id.startsWith ("focus_") || id == param_ids::focusedPad)
+            continue;
+        INFO (id);
+        REQUIRE (globalNames.contains (p->getName (128)));
+        REQUIRE (panel.findControl (p->getName (128)) != nullptr);
+    }
+
+    // The heading says these aren't one pad's.
+    REQUIRE (panel.findControl ("Master Gain") != nullptr);
+    REQUIRE (panel.findControl ("Filter Cutoff") == nullptr);
+
+    // A knob here changes the global parameter, as an undoable change.
+    auto* gainKnob = dynamic_cast<juce::Slider*> (panel.findControl ("Master Gain"));
+    REQUIRE (gainKnob != nullptr);
+    gainKnob->setValue (-12.0, juce::sendNotificationSync);
+    REQUIRE (proc.getState().getRawParameterValue (param_ids::masterGain)->load() == Catch::Approx (-12.0f));
+
+    // Changing pad keeps the global controls bound to the same parameters.
+    panel.setPad (5);
+    REQUIRE (dynamic_cast<juce::Slider*> (panel.findControl ("Master Gain"))->getValue() == Catch::Approx (-12.0));
+}
+
+TEST_CASE ("Find setting reaches the global settings", "[editor][findsetting][global]")
+{
+    auto names = [] (const juce::String& q)
+    {
+        juce::StringArray out;
+        for (int i : ParameterPanel::findSettings (q))
+            out.add (ParameterPanel::getSettingName (i));
+        return out;
+    };
+    REQUIRE (names ("master")[0] == "Master Gain");
+    REQUIRE (names ("edit layer")[0] == "Edit Layer");
+    REQUIRE (names ("chop c")[0] == "Chop Count");
+}
+
+TEST_CASE ("MIDI learn from the pad menu binds the setting last used", "[editor][midilearn]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    ASamplerProcessor proc;
+    proc.prepareToPlay (44100.0, 512);
+    ASamplerEditor editor (proc);
+    auto& panel = editor.getSettingsPanel();
+
+    auto learnItem = [&]
+    {
+        auto menu = editor.buildPadMenu (0);
+        for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+            if (it.getItem().text.startsWith ("MIDI learn"))
+                return it.getItem();
+        return juce::PopupMenu::Item();
+    };
+
+    // Nothing used yet: the item is there but says what to do first.
+    REQUIRE_FALSE (learnItem().isEnabled);
+    REQUIRE (learnItem().text.contains ("first move to a setting"));
+    REQUIRE_FALSE (proc.armMidiLearn (nullptr));
+
+    panel.showSection (panel.getSections().indexOf ("Filter"));
+    auto* cutoff = panel.findControl ("Filter Cutoff");
+    REQUIRE (cutoff != nullptr);
+    // An editor with no window can't take focus; deliver the focus callback
+    // a click or Tab would.
+    cutoff->focusGained (juce::Component::focusChangedDirectly);
+
+    auto item = learnItem();
+    REQUIRE (item.isEnabled);
+    auto* param = proc.getState().getParameter (param_ids::padFilterCutoff (1));
+    REQUIRE (item.text.contains (param->getName (128)));
+
+    editor.runPadMenuItem (item.itemID);
+    REQUIRE (proc.getLastStatusMessage().startsWith ("MIDI learn: move a controller"));
+
+    // The next controller binds to it, and then moves it.
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 20, 127), 0);
+    proc.processBlock (buf, midi);
+    REQUIRE (proc.getLastStatusMessage() == "Bound CC 20 to " + param->getName (128));
+    REQUIRE (param->getValue() == Catch::Approx (1.0f));
+
+    midi.clear();
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 20, 0), 0);
+    proc.processBlock (buf, midi);
+    REQUIRE (param->getValue() == Catch::Approx (0.0f));
 }

@@ -158,6 +158,9 @@ namespace asampler
         const bool loop = markerVisible (kLoopStart);
         if (loop != shownLoop) { shownLoop = loop; changed = true; }
 
+        const int editLayer = processor.getCurrentEditLayer();
+        if (editLayer != shownEditLayer) { shownEditLayer = editLayer; changed = true; }
+
         const float play = processor.getPadPlayFraction (pad);
         if (std::abs (play - shownPlayhead) > 0.0005f) { shownPlayhead = play; changed = true; }
 
@@ -224,6 +227,8 @@ namespace asampler
         juce::String title = "Pad " + juce::String (pad + 1) + "  " + name;
         if (sample != nullptr && sample->getSourceSampleRate() > 0.0)
             title << "  " << juce::String (sample->getNumSamples() / sample->getSourceSampleRate(), 2) << " s";
+        if (shownEditLayer > 0)
+            title << "  |  Load goes to layer " << (shownEditLayer + 1);
         if (viewEnd - viewStart < 0.999)
             title << "  (zoomed, double-click to show all)";
         g.drawText (title, bounds.reduced (6.0f, 0.0f).withHeight (16.0f), juce::Justification::centredLeft, true);

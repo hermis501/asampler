@@ -996,6 +996,13 @@ namespace asampler
         // kept). Returns how many, or -1 when it couldn't look.
         int  disableAllReaperAutomation();
 
+        // MIDI learn from the window: arms "MIDI Learn" with `target` as the
+        // parameter the next controller (CC) moved is bound to. The host
+        // parameter alone binds whatever was touched last, which in a host
+        // without a parameter list is hard to control. False (and said so)
+        // without a target.
+        bool armMidiLearn (juce::AudioProcessorParameter* target);
+
         // A load request from a ReaScript: "<pad>|<file>", pad 1-32 or 0 for
         // the selected pad. Scripts post it with
         //   reaper.SetExtState ("ASampler", "load " .. trackGUID, "3|C:\kick.wav", false)
