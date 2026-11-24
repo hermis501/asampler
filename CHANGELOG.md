@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.1
 
 - **Every setting is now in the plugin window.** A new **Global** section,
   last in the pad settings' section list, holds the plugin-wide settings that
