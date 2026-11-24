@@ -59,7 +59,15 @@ jobs:
           git clone --depth 1 --branch "$CATCH2_VERSION" https://github.com/catchorg/Catch2.git     _sdk/Catch2
           # JUCE widens the VST3 vendor name byte by byte, so the "č" in it
           # reached hosts garbled; see the note in CMakeLists.txt.
-          git -C _sdk/JUCE apply --verbose "$GITHUB_WORKSPACE/cmake/patches/juce-vst3-unicode-class-info.patch"
+          # --ignore-whitespace: the runners differ in line endings (the macOS
+          # checkout refused the plain patch), and only line ends differ.
+          patch="$GITHUB_WORKSPACE/cmake/patches/juce-vst3-unicode-class-info.patch"
+          if ! git -C _sdk/JUCE apply --verbose --ignore-whitespace "$patch"; then
+            git --version
+            git config --show-origin --get-regexp 'core\.(autocrlf|eol)' || true
+            head -c 400 _sdk/JUCE/modules/juce_audio_plugin_client/VST3/juce_VST3ModuleInfo.h | od -c | tail -5
+            exit 1
+          fi
 
       - name: Configure
         shell: bash
