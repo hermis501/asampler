@@ -78,7 +78,9 @@ jobs:
           ${{ matrix.cmake_args }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        # A bare --parallel lets make start every compile at once; on a 3-core
+        # macOS runner that can run out of memory and crawl for over an hour.
+        run: cmake --build build --config Release --parallel 4
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
